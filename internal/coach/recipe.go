@@ -65,7 +65,7 @@ func (s *Service) handleRecette(ctx context.Context, user *db.User, ingredients 
 	uid := user.ID
 	raw, err := s.llm.CompleteJSON(ctx, &uid, "recipe_ideas", llm.ModelReason, systemPrompt, userPrompt, llm.RecipeOptionsSchema)
 	if err != nil {
-		return Response{}, fmt.Errorf("recipe ideas: %w", err)
+		return responseFromLLMError(err, "recipe ideas")
 	}
 
 	var result domain.RecipeOptionsResult
@@ -115,7 +115,7 @@ func (s *Service) handleRecipeChoice(ctx context.Context, user *db.User, text st
 	uid := user.ID
 	raw, err := s.llm.CompleteText(ctx, &uid, "recipe_detail", llm.ModelReason, systemPrompt, userPrompt)
 	if err != nil {
-		return Response{}, fmt.Errorf("recipe detail: %w", err)
+		return responseFromLLMError(err, "recipe detail")
 	}
 
 	if err := s.store.UpdateUserState(ctx, user.ID, state.Idle, state.Data{}); err != nil {

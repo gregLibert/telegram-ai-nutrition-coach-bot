@@ -553,7 +553,7 @@ func (s *Service) handleMealPhoto(ctx context.Context, user *db.User, imagePath 
 	uid := user.ID
 	raw, err := s.llm.AnalyzeMealPhoto(ctx, &uid, imagePath, systemPrompt, userPrompt, llm.MealEstimateSchema)
 	if err != nil {
-		return Response{}, fmt.Errorf("vision analysis: %w", err)
+		return responseFromLLMError(err, "vision analysis")
 	}
 
 	var estimate domain.MealEstimate
@@ -570,9 +570,9 @@ func (s *Service) analyzeAndLogMeal(ctx context.Context, userID int64, descripti
 	systemPrompt := mealTextSystemPrompt()
 	userPrompt := fmt.Sprintf("Estimate this meal: %s", description)
 
-	raw, err := s.llm.CompleteJSON(ctx, &userID, "meal_text", llm.ModelVision, systemPrompt, userPrompt, llm.MealEstimateSchema)
+	raw, err := s.llm.CompleteJSON(ctx, &userID, "meal_text", llm.ModelReason, systemPrompt, userPrompt, llm.MealEstimateSchema)
 	if err != nil {
-		return Response{}, fmt.Errorf("meal analysis: %w", err)
+		return responseFromLLMError(err, "meal analysis")
 	}
 
 	var estimate domain.MealEstimate
@@ -643,9 +643,9 @@ func (s *Service) handlePortion(ctx context.Context, user *db.User, query string
 	)
 
 	uid := user.ID
-	raw, err := s.llm.CompleteJSON(ctx, &uid, "portion_solver", llm.ModelVision, systemPrompt, userPrompt, llm.PortionSolverSchema)
+	raw, err := s.llm.CompleteJSON(ctx, &uid, "portion_solver", llm.ModelReason, systemPrompt, userPrompt, llm.PortionSolverSchema)
 	if err != nil {
-		return Response{}, fmt.Errorf("portion solver: %w", err)
+		return responseFromLLMError(err, "portion solver")
 	}
 
 	var solution domain.PortionSolution
