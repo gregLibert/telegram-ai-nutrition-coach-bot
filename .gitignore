@@ -1,0 +1,40 @@
+# Secrets and local env
+.env
+.env.*
+!.env.example
+
+# Runtime data
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Build output
+bin/
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test and coverage
+coverage.out
+coverage.html
+*.test
+*.prof
+
+# IDE and OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Go workspace
+vendor/
+
+# Local audit dumps
+audit_code_dump.txt

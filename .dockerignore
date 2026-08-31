@@ -1,0 +1,8 @@
+data/
+bin/
+*.db
+.env
+.git/
+.gitignore
+README.md
+agent-transcripts/
