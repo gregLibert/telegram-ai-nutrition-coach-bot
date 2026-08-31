@@ -11,7 +11,6 @@ const (
 	OnboardingWeight     Name = "onboarding_weight"
 	OnboardingGender     Name = "onboarding_gender"
 	OnboardingActivity   Name = "onboarding_activity"
-	OnboardingGoal       Name = "onboarding_goal"
 	OnboardingTarget     Name = "onboarding_target_weight"
 	OnboardingExclusions Name = "onboarding_exclusions"
 	OnboardingRegion     Name = "onboarding_region"

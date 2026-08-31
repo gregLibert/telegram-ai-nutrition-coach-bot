@@ -26,6 +26,7 @@ const (
 	cmdConnectPolar  = "/connect_polar"
 	cmdUndo          = "/undo"
 	cmdRecette       = "/recette"
+	cmdHelp          = "/help"
 )
 
 type Service struct {
@@ -95,6 +96,8 @@ func (s *Service) routeCommand(ctx context.Context, user *db.User, text string, 
 		return s.handleUndo(ctx, user)
 	case strings.HasPrefix(text, cmdRecette):
 		return s.handleRecette(ctx, user, strings.TrimSpace(strings.TrimPrefix(text, cmdRecette)))
+	case strings.HasPrefix(text, cmdHelp):
+		return s.handleHelp(ctx, user)
 	case in.ImagePath != "":
 		return s.handleMealPhoto(ctx, user, in.ImagePath)
 	case text != "":
@@ -232,9 +235,7 @@ func (s *Service) handleText(ctx context.Context, user *db.User, text string, is
 		return s.onboardingGender(ctx, user, text)
 	case state.OnboardingActivity:
 		return s.onboardingActivity(ctx, user, text)
-	case state.OnboardingGoal:
-		return s.onboardingGoal(ctx, user, text)
-	case state.OnboardingTarget:
+	case state.OnboardingTarget, state.Name("onboarding_goal"):
 		return s.onboardingTarget(ctx, user, text)
 	case state.OnboardingExclusions:
 		return s.onboardingExclusions(ctx, user, text)
@@ -325,26 +326,32 @@ func (s *Service) onboardingActivity(ctx context.Context, user *db.User, text st
 		return Response{Text: "Invalid activity level.\n\n" + s.activityPrompt()}, nil
 	}
 	data := user.StateData.Set("activity_level", string(level))
-	if err := s.store.UpdateUserState(ctx, user.ID, state.OnboardingGoal, data); err != nil {
-		return Response{}, err
-	}
-	s.logTransition(ctx, user.ID, state.OnboardingActivity, state.OnboardingGoal, "activity_input")
-	return Response{Text: "What's your weight goal? (lose / keep / gain)"}, nil
-}
-
-func (s *Service) onboardingGoal(ctx context.Context, user *db.User, text string) (Response, error) {
-	goal := domain.WeightGoal(strings.ToLower(strings.TrimSpace(text)))
-	switch goal {
-	case domain.GoalLose, domain.GoalKeep, domain.GoalGain:
-	default:
-		return Response{Text: "Please enter: lose, keep, or gain."}, nil
-	}
-	data := user.StateData.Set("weight_goal", string(goal))
 	if err := s.store.UpdateUserState(ctx, user.ID, state.OnboardingTarget, data); err != nil {
 		return Response{}, err
 	}
-	s.logTransition(ctx, user.ID, state.OnboardingGoal, state.OnboardingTarget, "goal_input")
+	s.logTransition(ctx, user.ID, state.OnboardingActivity, state.OnboardingTarget, "activity_input")
 	return Response{Text: "What's your target weight in kg?"}, nil
+}
+
+func (s *Service) handleHelp(_ context.Context, _ *db.User) (Response, error) {
+	msg := "📖 Nutrition Coach — Commands\n\n" +
+		"👤 Profile\n" +
+		"  /start — Begin onboarding\n" +
+		"  /update_profil — Update your profile\n" +
+		"  /profile — View daily targets\n\n" +
+		"⚖️ Weight\n" +
+		"  /poids — Log current weight\n" +
+		"  /poids_history — Weight history & trends\n\n" +
+		"🍽 Meals\n" +
+		"  Send text, photo, or voice — Log a meal\n" +
+		"  /undo — Delete last logged meal\n" +
+		"  /forfait — Social meal fallback presets\n\n" +
+		"👨‍🍳 Coaching\n" +
+		"  /portion — Sous-Chef portion solver\n" +
+		"  /recette — AI recipe generator (2-step)\n\n" +
+		"⌚ Integrations\n" +
+		"  /connect_polar — Link Polar for calorie sync"
+	return Response{Text: msg}, nil
 }
 
 func (s *Service) onboardingTarget(ctx context.Context, user *db.User, text string) (Response, error) {
@@ -420,7 +427,7 @@ func (s *Service) buildProfileInput(data state.Data, targetWeight float64, regio
 		Age: age, HeightCm: height, WeightKg: weight, TargetWeightKg: targetWeight,
 		Gender:              domain.Gender(data.Get("gender")),
 		ActivityLevel:       domain.ActivityLevel(data.Get("activity_level")),
-		WeightGoal:          domain.WeightGoal(data.Get("weight_goal")),
+		WeightGoal:          domain.DeduceWeightGoal(weight, targetWeight),
 		ExcludedIngredients: data.Get("excluded_ingredients"),
 		Region:              region,
 	}, nil

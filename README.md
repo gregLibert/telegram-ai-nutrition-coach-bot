@@ -135,6 +135,7 @@ docker compose up -d --build
 | `/connect_polar` | Link Polar account for auto calorie sync |
 | `/undo` | Delete last logged meal |
 | `/recette [ingredients]` | Two-phase recipe generator |
+| `/help` | List all commands |
 
 ## LLM Routing
 

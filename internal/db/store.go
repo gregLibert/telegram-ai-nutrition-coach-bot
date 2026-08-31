@@ -341,7 +341,7 @@ func (s *Store) RecalculateProfileTargets(ctx context.Context, userID int64, wei
 	input := domain.ProfileInput{
 		Age: p.Age, HeightCm: p.HeightCm, WeightKg: weightKg,
 		TargetWeightKg: p.TargetWeightKg, Gender: p.Gender,
-		ActivityLevel: p.ActivityLevel, WeightGoal: domain.GoalLose,
+		ActivityLevel: p.ActivityLevel, WeightGoal: domain.DeduceWeightGoal(weightKg, p.TargetWeightKg),
 	}
 	targets := domain.CalculateMacroTargets(input)
 	_, err = s.db.ExecContext(ctx, `
