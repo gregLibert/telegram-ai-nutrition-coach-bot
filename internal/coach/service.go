@@ -18,14 +18,15 @@ import (
 const (
 	cmdStart         = "/start"
 	cmdProfile       = "/profile"
-	cmdUpdateProfile = "/update_profil"
-	cmdWeight        = "/poids"
-	cmdWeightHistory = "/poids_history"
+	cmdWeight        = "/weight"
+	cmdWeightHistory = "/weight_history"
 	cmdForfait       = "/forfait"
 	cmdPortion       = "/portion"
 	cmdConnectPolar  = "/connect_polar"
 	cmdUndo          = "/undo"
-	cmdRecette       = "/recette"
+	cmdRecipe        = "/recipe"
+	cmdSport         = "/sport"
+	cmdWhatIf        = "/whatif"
 	cmdHelp          = "/help"
 )
 
@@ -75,35 +76,58 @@ func (s *Service) Handle(ctx context.Context, in Input) (Response, error) {
 }
 
 func (s *Service) routeCommand(ctx context.Context, user *db.User, text string, in Input) (Response, error) {
+	if resp, ok, err := s.routeNamedCommand(ctx, user, text); ok {
+		return resp, err
+	}
+	if in.ImagePath != "" {
+		return s.handleMealPhoto(ctx, user, in.ImagePath)
+	}
+	if text != "" {
+		return s.handleText(ctx, user, text, in.VoiceText != "")
+	}
+	return Response{Text: "Send a command or describe your meal."}, nil
+}
+
+func (s *Service) routeNamedCommand(ctx context.Context, user *db.User, text string) (Response, bool, error) {
 	switch {
 	case strings.HasPrefix(text, cmdStart):
-		return s.handleStart(ctx, user)
+		resp, err := s.handleStart(ctx, user)
+		return resp, true, err
 	case strings.HasPrefix(text, cmdProfile):
-		return s.handleProfile(ctx, user)
-	case strings.HasPrefix(text, cmdUpdateProfile):
-		return s.handleUpdateProfile(ctx, user)
+		resp, err := s.handleProfile(ctx, user)
+		return resp, true, err
 	case strings.HasPrefix(text, cmdWeightHistory):
-		return s.handleWeightHistory(ctx, user)
+		resp, err := s.handleWeightHistory(ctx, user)
+		return resp, true, err
 	case strings.HasPrefix(text, cmdWeight):
-		return s.handleWeightPrompt(ctx, user)
+		resp, err := s.handleWeightPrompt(ctx, user)
+		return resp, true, err
 	case strings.HasPrefix(text, cmdForfait):
-		return s.handleForfaitMenu(ctx, user)
+		resp, err := s.handleForfaitMenu(ctx, user)
+		return resp, true, err
 	case strings.HasPrefix(text, cmdPortion):
-		return s.handlePortion(ctx, user, strings.TrimPrefix(text, cmdPortion))
+		resp, err := s.handlePortion(ctx, user, strings.TrimPrefix(text, cmdPortion))
+		return resp, true, err
+	case strings.HasPrefix(text, cmdWhatIf):
+		resp, err := s.handleWhatIf(ctx, user, strings.TrimSpace(strings.TrimPrefix(text, cmdWhatIf)))
+		return resp, true, err
 	case strings.HasPrefix(text, cmdConnectPolar):
-		return s.handleConnectPolar(ctx, user)
+		resp, err := s.handleConnectPolar(ctx, user)
+		return resp, true, err
 	case strings.HasPrefix(text, cmdUndo):
-		return s.handleUndo(ctx, user)
-	case strings.HasPrefix(text, cmdRecette):
-		return s.handleRecette(ctx, user, strings.TrimSpace(strings.TrimPrefix(text, cmdRecette)))
+		resp, err := s.handleUndo(ctx, user)
+		return resp, true, err
+	case strings.HasPrefix(text, cmdRecipe):
+		resp, err := s.handleRecette(ctx, user, strings.TrimSpace(strings.TrimPrefix(text, cmdRecipe)))
+		return resp, true, err
+	case strings.HasPrefix(text, cmdSport):
+		resp, err := s.handleSportPrompt(ctx, user)
+		return resp, true, err
 	case strings.HasPrefix(text, cmdHelp):
-		return s.handleHelp(ctx, user)
-	case in.ImagePath != "":
-		return s.handleMealPhoto(ctx, user, in.ImagePath)
-	case text != "":
-		return s.handleText(ctx, user, text, in.VoiceText != "")
+		resp, err := s.handleHelp(ctx, user)
+		return resp, true, err
 	default:
-		return Response{Text: "Send a command or describe your meal."}, nil
+		return Response{}, false, nil
 	}
 }
 
@@ -123,19 +147,22 @@ func (s *Service) handleStart(ctx context.Context, user *db.User) (Response, err
 	if err == nil {
 		return Response{Text: "Welcome back! Use /profile to view your targets or log a meal by describing it."}, nil
 	}
-	if err := s.store.UpdateUserState(ctx, user.ID, state.OnboardingAge, state.Data{}); err != nil {
+	if err := s.store.UpdateUserState(ctx, user.ID, state.OnboardingLanguage, state.Data{}); err != nil {
 		return Response{}, err
 	}
-	s.logTransition(ctx, user.ID, user.State, state.OnboardingAge, cmdStart)
-	return Response{Text: "Welcome! Let's set up your profile.\n\nHow old are you? (years)"}, nil
+	s.logTransition(ctx, user.ID, user.State, state.OnboardingLanguage, cmdStart)
+	return Response{Text: "Welcome! Let's set up your profile.\n\nPreferred language? (en / fr)"}, nil
 }
 
-func (s *Service) handleUpdateProfile(ctx context.Context, user *db.User) (Response, error) {
-	if err := s.store.UpdateUserState(ctx, user.ID, state.OnboardingAge, state.Data{}); err != nil {
+func (s *Service) handleSportPrompt(ctx context.Context, user *db.User) (Response, error) {
+	if _, err := s.store.GetProfile(ctx, user.ID); err != nil {
+		return Response{Text: "Complete /start onboarding first."}, nil
+	}
+	if err := s.store.UpdateUserState(ctx, user.ID, state.AwaitingSport, user.StateData); err != nil {
 		return Response{}, err
 	}
-	s.logTransition(ctx, user.ID, user.State, state.OnboardingAge, cmdUpdateProfile)
-	return Response{Text: "Let's update your profile.\n\nHow old are you? (years)"}, nil
+	s.logTransition(ctx, user.ID, user.State, state.AwaitingSport, cmdSport)
+	return Response{Text: "How many active calories did you burn? (e.g. 350)"}, nil
 }
 
 func (s *Service) handleProfile(ctx context.Context, user *db.User) (Response, error) {
@@ -148,10 +175,10 @@ func (s *Service) handleProfile(ctx context.Context, user *db.User) (Response, e
 		return Response{}, err
 	}
 	msg := fmt.Sprintf(
-		"📊 Your Profile\n\nAge: %d | Height: %.0f cm | Weight: %.1f kg\nTarget weight: %.1f kg\nActivity: %s\nRegion: %s\nExclusions: %s\n\n"+
+		"📊 Your Profile\n\nAge: %d | Height: %.0f cm | Weight: %.1f kg\nTarget weight: %.1f kg\nActivity: %s\nLanguage: %s\nRegion: %s\nExclusions: %s\n\n"+
 			"BMR: %.0f kcal | TDEE: %.0f kcal\n\n🎯 Daily Targets:\nCalories: %.0f kcal\nProtein: %.0f g | Fat: %.0f g | Carbs: %.0f g",
 		p.Age, p.HeightCm, p.WeightKg, p.TargetWeightKg, p.ActivityLevel,
-		displayOrNone(p.Region), displayOrNone(p.ExcludedIngredients),
+		normalizeLanguage(user.Language), displayOrNone(p.Region), displayOrNone(p.ExcludedIngredients),
 		targets.BMR, targets.TDEE,
 		targets.TargetCalories, targets.TargetProteinG, targets.TargetFatG, targets.TargetCarbsG,
 	)
@@ -171,7 +198,7 @@ func (s *Service) handleWeightHistory(ctx context.Context, user *db.User) (Respo
 		return Response{}, err
 	}
 	if len(entries) == 0 {
-		return Response{Text: "No weight entries yet. Use /poids to log your weight."}, nil
+		return Response{Text: "No weight entries yet. Use /weight to log your weight."}, nil
 	}
 
 	weights := make([]float64, len(entries))
@@ -224,29 +251,18 @@ func (s *Service) handleConnectPolar(ctx context.Context, user *db.User) (Respon
 }
 
 func (s *Service) handleText(ctx context.Context, user *db.User, text string, isVoice bool) (Response, error) {
+	if resp, ok, err := s.handleOnboardingText(ctx, user, text); ok {
+		return resp, err
+	}
 	switch user.State {
-	case state.OnboardingAge:
-		return s.onboardingAge(ctx, user, text)
-	case state.OnboardingHeight:
-		return s.onboardingHeight(ctx, user, text)
-	case state.OnboardingWeight:
-		return s.onboardingWeight(ctx, user, text)
-	case state.OnboardingGender:
-		return s.onboardingGender(ctx, user, text)
-	case state.OnboardingActivity:
-		return s.onboardingActivity(ctx, user, text)
-	case state.OnboardingTarget, state.Name("onboarding_goal"):
-		return s.onboardingTarget(ctx, user, text)
-	case state.OnboardingExclusions:
-		return s.onboardingExclusions(ctx, user, text)
-	case state.OnboardingRegion:
-		return s.onboardingRegion(ctx, user, text)
 	case state.AwaitingWeight:
 		return s.logWeight(ctx, user, text)
 	case state.AwaitingForfait:
 		return s.applyForfait(ctx, user, text)
 	case state.AwaitingRecipeChoice:
 		return s.handleRecipeChoice(ctx, user, text)
+	case state.AwaitingSport:
+		return s.handleSportCalories(ctx, user, text)
 	default:
 		source := "text"
 		if isVoice {
@@ -254,6 +270,56 @@ func (s *Service) handleText(ctx context.Context, user *db.User, text string, is
 		}
 		return s.logMealFromText(ctx, user, text, source)
 	}
+}
+
+func (s *Service) handleOnboardingText(ctx context.Context, user *db.User, text string) (Response, bool, error) {
+	switch user.State {
+	case state.OnboardingLanguage:
+		resp, err := s.onboardingLanguage(ctx, user, text)
+		return resp, true, err
+	case state.OnboardingAge:
+		resp, err := s.onboardingAge(ctx, user, text)
+		return resp, true, err
+	case state.OnboardingHeight:
+		resp, err := s.onboardingHeight(ctx, user, text)
+		return resp, true, err
+	case state.OnboardingWeight:
+		resp, err := s.onboardingWeight(ctx, user, text)
+		return resp, true, err
+	case state.OnboardingGender:
+		resp, err := s.onboardingGender(ctx, user, text)
+		return resp, true, err
+	case state.OnboardingActivity:
+		resp, err := s.onboardingActivity(ctx, user, text)
+		return resp, true, err
+	case state.OnboardingTarget, state.Name("onboarding_goal"):
+		resp, err := s.onboardingTarget(ctx, user, text)
+		return resp, true, err
+	case state.OnboardingExclusions:
+		resp, err := s.onboardingExclusions(ctx, user, text)
+		return resp, true, err
+	case state.OnboardingRegion:
+		resp, err := s.onboardingRegion(ctx, user, text)
+		return resp, true, err
+	default:
+		return Response{}, false, nil
+	}
+}
+
+func (s *Service) onboardingLanguage(ctx context.Context, user *db.User, text string) (Response, error) {
+	lang := strings.ToLower(strings.TrimSpace(text))
+	if lang != "en" && lang != "fr" {
+		return Response{Text: "Please enter 'en' or 'fr'."}, nil
+	}
+	if err := s.store.UpdateUserLanguage(ctx, user.ID, lang); err != nil {
+		return Response{}, err
+	}
+	user.Language = lang
+	if err := s.store.UpdateUserState(ctx, user.ID, state.OnboardingAge, user.StateData); err != nil {
+		return Response{}, err
+	}
+	s.logTransition(ctx, user.ID, state.OnboardingLanguage, state.OnboardingAge, "language_input")
+	return Response{Text: "How old are you? (years)"}, nil
 }
 
 func (s *Service) onboardingAge(ctx context.Context, user *db.User, text string) (Response, error) {
@@ -337,20 +403,22 @@ func (s *Service) handleHelp(_ context.Context, _ *db.User) (Response, error) {
 	msg := "📖 Nutrition Coach — Commands\n\n" +
 		"👤 Profile\n" +
 		"  /start — Begin onboarding\n" +
-		"  /update_profil — Update your profile\n" +
 		"  /profile — View daily targets\n\n" +
 		"⚖️ Weight\n" +
-		"  /poids — Log current weight\n" +
-		"  /poids_history — Weight history & trends\n\n" +
+		"  /weight — Log current weight\n" +
+		"  /weight_history — Weight history & trends\n\n" +
 		"🍽 Meals\n" +
 		"  Send text, photo, or voice — Log a meal\n" +
 		"  /undo — Delete last logged meal\n" +
+		"  /whatif <food> — Simulate meal impact (not saved)\n" +
 		"  /forfait — Social meal fallback presets\n\n" +
 		"👨‍🍳 Coaching\n" +
-		"  /portion — Sous-Chef portion solver\n" +
-		"  /recette — AI recipe generator (2-step)\n\n" +
+		"  /portion — Smart portion solver\n" +
+		"  /recipe — AI recipe generator (2-step)\n" +
+		"  /sport — Log manual activity calories\n\n" +
 		"⌚ Integrations\n" +
-		"  /connect_polar — Link Polar for calorie sync"
+		"  /connect_polar — Link Polar for calorie sync\n\n" +
+		"  /help — Show this list"
 	return Response{Text: msg}, nil
 }
 
@@ -408,7 +476,7 @@ func (s *Service) onboardingRegion(ctx context.Context, user *db.User, text stri
 	msg := fmt.Sprintf(
 		"✅ Profile created!\n\nBMR: %.0f kcal | TDEE: %.0f kcal\nRegion: %s\n\n🎯 Daily Targets:\n"+
 			"Calories: %.0f kcal (deficit: %.0f)\nProtein: %.0f g | Fat: %.0f g | Carbs: %.0f g\n\n"+
-			"Describe meals in text, send photos, or use /poids to track weight.",
+			"Describe meals in text, send photos, or use /weight to track weight.",
 		targets.BMR, targets.TDEE, region,
 		targets.TargetCalories, targets.TDEE-targets.TargetCalories,
 		targets.TargetProteinG, targets.TargetFatG, targets.TargetCarbsG,
@@ -540,7 +608,7 @@ func (s *Service) logMealFromText(ctx context.Context, user *db.User, text, sour
 	if _, err := s.store.GetProfile(ctx, user.ID); err != nil {
 		return Response{Text: "Complete /start onboarding first."}, nil
 	}
-	return s.analyzeAndLogMeal(ctx, user.ID, text, source)
+	return s.analyzeAndLogMeal(ctx, user.ID, text, source, user.Language)
 }
 
 func (s *Service) handleMealPhoto(ctx context.Context, user *db.User, imagePath string) (Response, error) {
@@ -548,7 +616,7 @@ func (s *Service) handleMealPhoto(ctx context.Context, user *db.User, imagePath 
 		return Response{Text: "Complete /start onboarding first."}, nil
 	}
 
-	systemPrompt := mealVisionSystemPrompt()
+	systemPrompt := withLanguage(mealVisionSystemPrompt(), user.Language)
 	userPrompt := "Analyze this meal photo. Estimate calories and macros."
 	uid := user.ID
 	raw, err := s.llm.AnalyzeMealPhoto(ctx, &uid, imagePath, systemPrompt, userPrompt, llm.MealEstimateSchema)
@@ -566,8 +634,8 @@ func (s *Service) handleMealPhoto(ctx context.Context, user *db.User, imagePath 
 	return s.formatMealResponse(ctx, user.ID, estimate)
 }
 
-func (s *Service) analyzeAndLogMeal(ctx context.Context, userID int64, description, source string) (Response, error) {
-	systemPrompt := mealTextSystemPrompt()
+func (s *Service) analyzeAndLogMeal(ctx context.Context, userID int64, description, source, lang string) (Response, error) {
+	systemPrompt := withLanguage(mealTextSystemPrompt(), lang)
 	userPrompt := fmt.Sprintf("Estimate this meal: %s", description)
 
 	raw, err := s.llm.CompleteJSON(ctx, &userID, "meal_text", llm.ModelReason, systemPrompt, userPrompt, llm.MealEstimateSchema)
@@ -636,9 +704,13 @@ func (s *Service) handlePortion(ctx context.Context, user *db.User, query string
 	}
 	remaining := domain.RemainingMacros(targets, progress)
 
-	systemPrompt := portionSolverSystemPrompt()
+	loc := domain.LoadLocationOrUTC(user.Timezone)
+	localNow := time.Now().In(loc)
+
+	systemPrompt := withLanguage(portionSolverSystemPrompt(), user.Language)
 	userPrompt := fmt.Sprintf(
-		"Remaining daily macros: %.0f kcal, %.0f g protein, %.0f g fat, %.0f g carbs.\nUser query: %s",
+		"Current local time: %s (hour=%d).\nRemaining daily macros: %.0f kcal, %.0f g protein, %.0f g fat, %.0f g carbs.\nUser query: %s",
+		localNow.Format("15:04"), localNow.Hour(),
 		remaining.TargetCalories, remaining.TargetProteinG, remaining.TargetFatG, remaining.TargetCarbsG, query,
 	)
 
@@ -654,7 +726,7 @@ func (s *Service) handlePortion(ctx context.Context, user *db.User, query string
 	}
 
 	var sb strings.Builder
-	sb.WriteString("👨‍🍳 Sous-Chef Portion Solver\n\n")
+	sb.WriteString("👨‍🍳 Smart Portion Solver\n\n")
 	for _, ing := range solution.Ingredients {
 		fmt.Fprintf(&sb, "  • %s: %.0f g raw (%.0f kcal, P:%.0f F:%.0f C:%.0f)\n",
 			ing.Name, ing.RawGrams, ing.Calories, ing.ProteinG, ing.FatG, ing.CarbsG)
@@ -665,6 +737,76 @@ func (s *Service) handlePortion(ctx context.Context, user *db.User, query string
 		solution.Explanation,
 	)
 	return Response{Text: sb.String()}, nil
+}
+
+func (s *Service) handleWhatIf(ctx context.Context, user *db.User, description string) (Response, error) {
+	description = strings.TrimSpace(description)
+	if description == "" {
+		return Response{Text: "Usage: /whatif burger and fries"}, nil
+	}
+	if _, err := s.store.GetProfile(ctx, user.ID); err != nil {
+		return Response{Text: "Complete /start onboarding first."}, nil
+	}
+
+	targets, err := s.store.EffectiveTargets(ctx, user.ID)
+	if err != nil {
+		return Response{}, err
+	}
+	progress, err := s.store.DailyProgressNow(ctx, user.ID)
+	if err != nil {
+		return Response{}, err
+	}
+	remaining := domain.RemainingMacros(targets, progress)
+
+	systemPrompt := withLanguage(mealTextSystemPrompt(), user.Language)
+	userPrompt := fmt.Sprintf("Estimate this meal (simulation only, do not assume it was eaten): %s", description)
+	uid := user.ID
+	raw, err := s.llm.CompleteJSON(ctx, &uid, "whatif_meal", llm.ModelReason, systemPrompt, userPrompt, llm.MealEstimateSchema)
+	if err != nil {
+		return responseFromLLMError(err, "whatif analysis")
+	}
+
+	var estimate domain.MealEstimate
+	if err := json.Unmarshal([]byte(raw), &estimate); err != nil {
+		return Response{}, fmt.Errorf("parse whatif estimate: %w", err)
+	}
+	if estimate.Description == "" {
+		estimate.Description = description
+	}
+
+	projected := remaining.TargetCalories - estimate.Calories
+	msg := fmt.Sprintf(
+		"🔮 Simulation: %s (~%.0f kcal, P: %.0fg, F: %.0fg, C: %.0fg)\n\n"+
+			"Impact: If you eat this, your remaining budget will drop from %.0f to %.0f kcal.",
+		estimate.Description, estimate.Calories, estimate.ProteinG, estimate.FatG, estimate.CarbsG,
+		remaining.TargetCalories, projected,
+	)
+	return Response{Text: msg}, nil
+}
+
+func (s *Service) handleSportCalories(ctx context.Context, user *db.User, text string) (Response, error) {
+	cal, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
+	if err != nil || cal <= 0 || cal > 5000 {
+		return Response{Text: "Please enter a valid calorie amount (1-5000)."}, nil
+	}
+
+	log, err := s.store.AddManualActivityCalories(ctx, user.ID, cal)
+	if err != nil {
+		return Response{}, err
+	}
+	if err := s.store.UpdateUserState(ctx, user.ID, state.Idle, state.Data{}); err != nil {
+		return Response{}, err
+	}
+	s.logTransition(ctx, user.ID, state.AwaitingSport, state.Idle, "sport_input")
+
+	targets, err := s.store.EffectiveTargets(ctx, user.ID)
+	if err != nil {
+		return Response{}, err
+	}
+	return Response{Text: fmt.Sprintf(
+		"🏃 Logged +%.0f active kcal today (total activity: %.0f).\nAdjusted TDEE: %.0f kcal\nEffective daily target: %.0f kcal",
+		cal, log.ActiveCalories, log.AdjustedTDEE, targets.TargetCalories,
+	)}, nil
 }
 
 func (s *Service) DailyRecap(ctx context.Context, userID int64) (string, error) {
@@ -698,7 +840,15 @@ func (s *Service) WeeklyReport(ctx context.Context, userID int64) (string, error
 	}
 	stats := domain.WeightStatsFromEntries(weights)
 
-	systemPrompt := "You are an expert nutrition coach. Provide a concise, actionable weekly summary."
+	lang := "en"
+	if u, err := s.store.GetUserByID(ctx, userID); err == nil {
+		lang = u.Language
+	}
+
+	systemPrompt := withLanguage(
+		"You are an expert nutrition coach. Provide a concise, actionable weekly summary.",
+		lang,
+	)
 	userPrompt := fmt.Sprintf(
 		"Weekly data: %d logging days, %.0f total kcal (avg %.0f/day). Weight delta: %+.1f kg, 7-day avg: %.2f kg.",
 		days, totalCal, avgCal, stats.DeltaFromStart, stats.MovingAvg7DayKg,
@@ -751,8 +901,11 @@ Use standard portion sizes when amounts aren't specified. Return precise numeric
 }
 
 func portionSolverSystemPrompt() string {
-	return `You are a precision nutrition sous-chef. Given remaining daily macro targets and available ingredients,
-calculate exact raw gram weights to hit those targets as closely as possible.
+	return `You are a precision nutrition sous-chef. Given remaining daily macro targets, current local time, and available ingredients,
+calculate exact raw gram weights to hit an appropriate share of those targets.
+Evaluate the current time:
+- If it is before 15:00 (lunchtime), you MUST NOT use 100% of the remaining macros. Calculate portions to hit approximately 40% to 50% of the remaining daily macros, and explicitly state that you are leaving the rest for dinner.
+- If it is 15:00 or later (evening), you may use up to 100% of the remaining macros.
 Solve the macro equation systematically. Output specific gram measurements for each ingredient.
 All weights are raw/uncooked unless stated otherwise.`
 }

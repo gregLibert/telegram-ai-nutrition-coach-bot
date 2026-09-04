@@ -59,7 +59,7 @@ func (s *Service) handleRecette(ctx context.Context, user *db.User, ingredients 
 		return Response{}, err
 	}
 
-	systemPrompt := recipeIdeasSystemPrompt()
+	systemPrompt := withLanguage(recipeIdeasSystemPrompt(), user.Language)
 	userPrompt := buildRecipeIdeasPrompt(remaining, profile, ingredients)
 
 	uid := user.ID
@@ -73,7 +73,7 @@ func (s *Service) handleRecette(ctx context.Context, user *db.User, ingredients 
 		return Response{}, fmt.Errorf("parse recipe options: %w", err)
 	}
 	if len(result.Options) == 0 {
-		return Response{Text: "Could not generate recipe ideas. Try again with /recette."}, nil
+		return Response{Text: "Could not generate recipe ideas. Try again with /recipe."}, nil
 	}
 
 	optionsJSON, err := json.Marshal(result.Options)
@@ -85,7 +85,7 @@ func (s *Service) handleRecette(ctx context.Context, user *db.User, ingredients 
 	if err := s.store.UpdateUserState(ctx, user.ID, state.AwaitingRecipeChoice, data); err != nil {
 		return Response{}, err
 	}
-	s.logTransition(ctx, user.ID, user.State, state.AwaitingRecipeChoice, cmdRecette)
+	s.logTransition(ctx, user.ID, user.State, state.AwaitingRecipeChoice, cmdRecipe)
 
 	return Response{Text: formatRecipeOptions(result.Options)}, nil
 }
@@ -98,7 +98,7 @@ func (s *Service) handleRecipeChoice(ctx context.Context, user *db.User, text st
 
 	options, err := parseStoredRecipeOptions(user.StateData.Get(stateKeyRecipeOptions))
 	if err != nil {
-		return Response{Text: "Recipe session expired. Send /recette to start again."}, nil
+		return Response{Text: "Recipe session expired. Send /recipe to start again."}, nil
 	}
 
 	selected, ok := findRecipeOption(options, choice)
@@ -106,7 +106,7 @@ func (s *Service) handleRecipeChoice(ctx context.Context, user *db.User, text st
 		return Response{Text: "Invalid choice. Reply with 1, 2, or 3."}, nil
 	}
 
-	systemPrompt := recipeDetailSystemPrompt()
+	systemPrompt := withLanguage(recipeDetailSystemPrompt(), user.Language)
 	userPrompt := fmt.Sprintf(
 		"Write the recipe for: %s\nMacros: %s\nKey ingredients: %s",
 		selected.Title, selected.MacrosSummary, strings.Join(selected.KeyIngredients, ", "),

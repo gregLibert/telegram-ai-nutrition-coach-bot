@@ -28,6 +28,7 @@ type User struct {
 	State      state.Name
 	StateData  state.Data
 	Timezone   string
+	Language   string
 }
 
 type Profile struct {
@@ -165,8 +166,8 @@ func (s *Store) GetUserByID(ctx context.Context, id int64) (*User, error) {
 	var st, sd string
 	var tgID, chatID sql.NullInt64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, telegram_id, chat_id, username, state, state_data, timezone FROM users WHERE id = ?`, id).
-		Scan(&u.ID, &tgID, &chatID, &u.Username, &st, &sd, &u.Timezone)
+		`SELECT id, telegram_id, chat_id, username, state, state_data, timezone, language FROM users WHERE id = ?`, id).
+		Scan(&u.ID, &tgID, &chatID, &u.Username, &st, &sd, &u.Timezone, &u.Language)
 	if err != nil {
 		return nil, fmt.Errorf("get user: %w", err)
 	}
@@ -174,7 +175,25 @@ func (s *Store) GetUserByID(ctx context.Context, id int64) (*User, error) {
 	u.ChatID = chatID
 	u.State = state.Name(st)
 	u.StateData = state.ParseData(sd)
+	if u.Language == "" {
+		u.Language = "en"
+	}
 	return u, nil
+}
+
+func (s *Store) UpdateUserLanguage(ctx context.Context, userID int64, language string) error {
+	switch language {
+	case "en", "fr":
+	default:
+		return fmt.Errorf("unsupported language: %s", language)
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET language = ?, updated_at = datetime('now') WHERE id = ?`,
+		language, userID)
+	if err != nil {
+		return fmt.Errorf("update language: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) UpdateUserState(ctx context.Context, userID int64, st state.Name, data state.Data) error {
@@ -470,7 +489,7 @@ func (s *Store) SaveLLMAudit(ctx context.Context, userID *int64, operation, mode
 
 func (s *Store) ListUsersWithTelegram(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, telegram_id, chat_id, username, state, state_data, timezone
+		`SELECT id, telegram_id, chat_id, username, state, state_data, timezone, language
 		 FROM users WHERE telegram_id IS NOT NULL`)
 	if err != nil {
 		return nil, err
@@ -482,16 +501,70 @@ func (s *Store) ListUsersWithTelegram(ctx context.Context) ([]User, error) {
 		u := User{}
 		var st, sd string
 		var tgID, chatID sql.NullInt64
-		if err := rows.Scan(&u.ID, &tgID, &chatID, &u.Username, &st, &sd, &u.Timezone); err != nil {
+		if err := rows.Scan(&u.ID, &tgID, &chatID, &u.Username, &st, &sd, &u.Timezone, &u.Language); err != nil {
 			return nil, err
 		}
 		u.TelegramID = tgID
 		u.ChatID = chatID
 		u.State = state.Name(st)
 		u.StateData = state.ParseData(sd)
+		if u.Language == "" {
+			u.Language = "en"
+		}
 		users = append(users, u)
 	}
 	return users, rows.Err()
+}
+
+// HasMealInLocalWindow reports whether the user logged any meal in [startHour, endHour) local time on ref's day.
+func (s *Store) HasMealInLocalWindow(ctx context.Context, userID int64, ref time.Time, startHour, endHour int) (bool, error) {
+	loc := s.userLocation(ctx, userID)
+	start, end := domain.LocalHourBounds(loc, ref, startHour, endHour)
+	var count int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM meals
+		WHERE user_id = ? AND logged_at >= ? AND logged_at < ?`,
+		userID, domain.FormatSQLiteUTC(start), domain.FormatSQLiteUTC(end)).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// AddManualActivityCalories adds sport calories to today's daily_log and bumps adjusted TDEE.
+func (s *Store) AddManualActivityCalories(ctx context.Context, userID int64, calories float64) (*DailyLog, error) {
+	if calories <= 0 {
+		return nil, fmt.Errorf("calories must be positive")
+	}
+	profile, err := s.GetProfile(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	loc := s.userLocation(ctx, userID)
+	day := time.Now().In(loc)
+	dayStr := day.Format("2006-01-02")
+
+	existing, err := s.GetDailyLog(ctx, userID, day)
+	active := calories
+	baseTDEE := profile.TDEE
+	if err == nil {
+		active = existing.ActiveCalories + calories
+		if existing.BaseTDEE > 0 {
+			baseTDEE = existing.BaseTDEE
+		}
+	}
+
+	log := DailyLog{
+		UserID:         userID,
+		LogDate:        dayStr,
+		BaseTDEE:       baseTDEE,
+		ActiveCalories: active,
+		AdjustedTDEE:   baseTDEE + active,
+	}
+	if err := s.UpsertDailyLog(ctx, log); err != nil {
+		return nil, err
+	}
+	return &log, nil
 }
 
 func (s *Store) WasSchedulerSentToday(ctx context.Context, userID int64, jobType string) (bool, error) {

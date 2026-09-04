@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/coach"
@@ -18,6 +19,8 @@ type Scheduler struct {
 	notify   Notifier
 	location *time.Location
 }
+
+var errSkipReminder = errors.New("skip reminder: meal already logged")
 
 func New(store *db.Store, coachSvc *coach.Service, logger *trace.Logger, notify Notifier, tz string) *Scheduler {
 	loc, err := time.LoadLocation(tz)
@@ -46,13 +49,9 @@ func (sch *Scheduler) tick(ctx context.Context, now time.Time) {
 
 	switch {
 	case hour == 14 && minute == 0:
-		sch.sendJob(ctx, "lunch_reminder", func(uid int64) (string, error) {
-			return sch.coach.InactivityReminder("lunch"), nil
-		})
+		sch.sendMealReminder(ctx, "lunch_reminder", "lunch", 11, 14, now)
 	case hour == 21 && minute == 0:
-		sch.sendJob(ctx, "dinner_reminder", func(uid int64) (string, error) {
-			return sch.coach.InactivityReminder("dinner"), nil
-		})
+		sch.sendMealReminder(ctx, "dinner_reminder", "dinner", 18, 21, now)
 	case hour == 21 && minute == 30:
 		sch.sendJob(ctx, "daily_recap", func(uid int64) (string, error) {
 			return sch.coach.DailyRecap(ctx, uid)
@@ -67,6 +66,20 @@ func (sch *Scheduler) tick(ctx context.Context, now time.Time) {
 }
 
 type messageFn func(userID int64) (string, error)
+
+// sendMealReminder skips users who already logged a meal in [windowStart, windowEnd) local time.
+func (sch *Scheduler) sendMealReminder(ctx context.Context, jobType, mealType string, windowStart, windowEnd int, now time.Time) {
+	sch.sendJob(ctx, jobType, func(uid int64) (string, error) {
+		hasMeal, err := sch.store.HasMealInLocalWindow(ctx, uid, now, windowStart, windowEnd)
+		if err != nil {
+			return "", err
+		}
+		if hasMeal {
+			return "", errSkipReminder
+		}
+		return sch.coach.InactivityReminder(mealType), nil
+	})
+}
 
 func (sch *Scheduler) sendJob(ctx context.Context, jobType string, fn messageFn) {
 	users, err := sch.store.ListUsersWithTelegram(ctx)
@@ -86,6 +99,10 @@ func (sch *Scheduler) sendJob(ctx context.Context, jobType string, fn messageFn)
 
 		msg, err := fn(u.ID)
 		if err != nil {
+			if errors.Is(err, errSkipReminder) {
+				_ = sch.store.LogSchedulerSent(ctx, u.ID, jobType)
+				continue
+			}
 			sch.logError(ctx, jobType, err)
 			continue
 		}

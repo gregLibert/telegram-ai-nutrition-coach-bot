@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
     state           TEXT NOT NULL DEFAULT 'idle',
     state_data      TEXT NOT NULL DEFAULT '{}',
     timezone        TEXT NOT NULL DEFAULT 'Europe/Paris',
+    language        TEXT NOT NULL DEFAULT 'en' CHECK (language IN ('en', 'fr')),
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );

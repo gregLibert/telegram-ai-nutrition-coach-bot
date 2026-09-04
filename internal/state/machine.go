@@ -6,6 +6,7 @@ type Name string
 
 const (
 	Idle                 Name = "idle"
+	OnboardingLanguage   Name = "onboarding_language"
 	OnboardingAge        Name = "onboarding_age"
 	OnboardingHeight     Name = "onboarding_height"
 	OnboardingWeight     Name = "onboarding_weight"
@@ -18,6 +19,7 @@ const (
 	AwaitingMeal         Name = "awaiting_meal"
 	AwaitingForfait      Name = "awaiting_forfait"
 	AwaitingRecipeChoice Name = "awaiting_recipe_choice"
+	AwaitingSport        Name = "awaiting_sport"
 )
 
 type Data map[string]string

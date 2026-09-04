@@ -19,6 +19,7 @@ func (s *Store) migrateColumns() error {
 	alters := []string{
 		`ALTER TABLE profiles ADD COLUMN excluded_ingredients TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE profiles ADD COLUMN region TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN language TEXT NOT NULL DEFAULT 'en'`,
 	}
 	for _, stmt := range alters {
 		_, _ = s.db.Exec(stmt)

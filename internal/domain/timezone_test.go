@@ -84,3 +84,51 @@ func TestLoadLocationOrUTC(t *testing.T) {
 		t.Error("expected UTC for empty")
 	}
 }
+
+func TestLocalHourBounds(t *testing.T) {
+	paris, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		loc       *time.Location
+		ref       time.Time
+		startHour int
+		endHour   int
+		wantStart string
+		wantEnd   string
+	}{
+		{
+			name:      "lunch window paris",
+			loc:       paris,
+			ref:       time.Date(2026, 8, 29, 14, 0, 0, 0, paris),
+			startHour: 11,
+			endHour:   14,
+			wantStart: "2026-08-29T09:00:00Z", // 11:00 CEST
+			wantEnd:   "2026-08-29T12:00:00Z", // 14:00 CEST
+		},
+		{
+			name:      "dinner window utc",
+			loc:       time.UTC,
+			ref:       time.Date(2026, 8, 29, 21, 0, 0, 0, time.UTC),
+			startHour: 18,
+			endHour:   21,
+			wantStart: "2026-08-29T18:00:00Z",
+			wantEnd:   "2026-08-29T21:00:00Z",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start, end := LocalHourBounds(tt.loc, tt.ref, tt.startHour, tt.endHour)
+			if start.Format(time.RFC3339) != tt.wantStart {
+				t.Errorf("start = %s, want %s", start.Format(time.RFC3339), tt.wantStart)
+			}
+			if end.Format(time.RFC3339) != tt.wantEnd {
+				t.Errorf("end = %s, want %s", end.Format(time.RFC3339), tt.wantEnd)
+			}
+		})
+	}
+}

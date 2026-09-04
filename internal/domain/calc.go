@@ -19,8 +19,11 @@ func activityMultiplier(level ActivityLevel) float64 {
 	}
 }
 
-// CalculateBMR uses the Mifflin-St Jeor formula.
+// CalculateBMR uses Schofield for adolescents (age < 18) and Mifflin-St Jeor for adults.
 func CalculateBMR(weightKg, heightCm float64, age int, gender Gender) float64 {
+	if age < 18 {
+		return calculateSchofieldBMR(weightKg, gender)
+	}
 	base := 10*weightKg + 6.25*heightCm - 5*float64(age)
 	switch gender {
 	case GenderMale:
@@ -29,6 +32,16 @@ func CalculateBMR(weightKg, heightCm float64, age int, gender Gender) float64 {
 		return base - 161
 	default:
 		return base + 5
+	}
+}
+
+// calculateSchofieldBMR applies the Schofield equation for ages 10–17.
+func calculateSchofieldBMR(weightKg float64, gender Gender) float64 {
+	switch gender {
+	case GenderFemale:
+		return 12.2*weightKg + 746
+	default: // male / boys
+		return 17.5*weightKg + 651
 	}
 }
 

@@ -56,7 +56,7 @@ func runSingle(ctx context.Context, svc *coach.Service, username, text, imagePat
 }
 
 func runInteractive(ctx context.Context, svc *coach.Service, username, defaultImage string) {
-	fmt.Println("Nutrition Coach CLI — type messages or commands (/start, /profile, /poids, /forfait, /portion)")
+	fmt.Println("Nutrition Coach CLI — type messages or commands (/start, /profile, /weight, /portion, /recipe, /whatif, /sport)")
 	fmt.Println("Use --image <path> flag or prefix with @image:<path> for photo analysis")
 	fmt.Println("Type 'exit' to quit.")
 

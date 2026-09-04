@@ -30,6 +30,26 @@ func TestCalculateBMR(t *testing.T) {
 			weight: 90, height: 175, age: 55, gender: GenderMale,
 			want: 1723.75, tolerance: 1,
 		},
+		{
+			name:   "teen boy schofield",
+			weight: 60, height: 170, age: 16, gender: GenderMale,
+			want: 17.5*60 + 651, tolerance: 0.1,
+		},
+		{
+			name:   "teen girl schofield",
+			weight: 55, height: 165, age: 15, gender: GenderFemale,
+			want: 12.2*55 + 746, tolerance: 0.1,
+		},
+		{
+			name:   "age 17 uses schofield",
+			weight: 70, height: 175, age: 17, gender: GenderMale,
+			want: 17.5*70 + 651, tolerance: 0.1,
+		},
+		{
+			name:   "age 18 uses mifflin",
+			weight: 70, height: 175, age: 18, gender: GenderMale,
+			want: 10*70 + 6.25*175 - 5*18 + 5, tolerance: 0.1,
+		},
 	}
 
 	for _, tt := range tests {

@@ -125,36 +125,39 @@ docker compose up -d --build
 
 | Command | Description |
 |---|---|
-| `/start` | Onboarding flow |
+| `/start` | Onboarding flow (includes language preference) |
 | `/profile` | View current targets |
-| `/update_profil` | Re-run onboarding |
-| `/poids` | Log weight |
-| `/poids_history` | Weight history with 7-day avg |
-| `/forfait` | Social meal fallback presets |
-| `/portion <query>` | Sous-Chef portion solver |
-| `/connect_polar` | Link Polar account for auto calorie sync |
+| `/weight` | Log weight |
+| `/weight_history` | Weight history with 7-day avg |
+| `/portion <query>` | Smart portion solver (time-aware macro split) |
+| `/recipe [ingredients]` | Two-phase recipe generator |
+| `/whatif <food>` | Simulate meal macros without logging |
+| `/sport` | Log manual activity calories |
 | `/undo` | Delete last logged meal |
-| `/recette [ingredients]` | Two-phase recipe generator |
+| `/forfait` | Social meal fallback presets |
+| `/connect_polar` | Link Polar account for auto calorie sync |
 | `/help` | List all commands |
 
 ## LLM Routing
 
 | Use Case | Model |
 |---|---|
-| Meal vision & text analysis | `qwen/qwen-2.5-vl-72b-instruct` |
+| Meal photo analysis | `qwen/qwen-2.5-vl-72b-instruct` |
+| Text meals, portions, recipes, what-if | `deepseek/deepseek-chat` |
 | Weekly summary & coaching | `deepseek/deepseek-chat` |
 
-All LLM calls use structured JSON schema outputs. Full audit trail (prompts, responses, tokens, latency) is logged via `slog` JSON and persisted to `llm_audit_log`.
+All LLM calls use structured JSON schema outputs. Full audit trail (prompts, responses, tokens, latency) is logged via `slog` JSON and persisted to `llm_audit_log`. Replies follow the user's `language` preference (`en` / `fr`).
 
 ## Features
 
-- **Mifflin-St Jeor BMR** with activity-based TDEE and 500 kcal deficit
+- **Teen-aware BMR**: Schofield equation for age &lt; 18; Mifflin-St Jeor for adults
 - **Macro targets**: 1.6 g/kg protein, 31% fat, remainder carbs
 - **Weight tracking** with 7-day moving average and auto-recalculation at ≥1 kg change
 - **Multimodal meal logging** (text, photo, voice via OpenAI Whisper)
-- **Proactive scheduler**: lunch (14:00), dinner (21:00), daily recap (21:30), weekly report (Sunday 20:00)
+- **Smart reminders**: lunch (14:00) and dinner (21:00) only if no meal was logged in the window
 - **Forfait fallback**: predefined heavy meals with 3-day caloric smoothing
-- **Portion solver**: LLM-powered gram-weight calculations
+- **Smart portion solver**: at lunch uses ~40–50% of remaining macros; evening may use 100%
+- **What-if simulation**: estimate meal impact without saving
 - **Plateau detection**: 14-day variance check with diet break suggestion
 - **Polar sync**: OAuth2 connect flow, daily active calorie fetch at 23:00, dynamic TDEE via `daily_logs`
 

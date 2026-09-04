@@ -10,6 +10,21 @@ func DayBounds(loc *time.Location, ref time.Time) (start, end time.Time) {
 	return startLocal.UTC(), startLocal.Add(24 * time.Hour).UTC()
 }
 
+// LocalHourBounds returns UTC [start, end) for [startHour:00, endHour:00) on ref's local calendar day.
+// If endHour is before or equal to startHour, end is treated as the next local midnight (exclusive).
+func LocalHourBounds(loc *time.Location, ref time.Time, startHour, endHour int) (start, end time.Time) {
+	local := ref.In(loc)
+	y, m, d := local.Date()
+	startLocal := time.Date(y, m, d, startHour, 0, 0, 0, loc)
+	var endLocal time.Time
+	if endHour <= startHour {
+		endLocal = time.Date(y, m, d, 0, 0, 0, 0, loc).Add(24 * time.Hour)
+	} else {
+		endLocal = time.Date(y, m, d, endHour, 0, 0, 0, loc)
+	}
+	return startLocal.UTC(), endLocal.UTC()
+}
+
 // WeekBounds returns UTC [start, end) for a 7-day window ending on ref's local day (inclusive).
 func WeekBounds(loc *time.Location, ref time.Time) (start, end time.Time) {
 	local := ref.In(loc)
