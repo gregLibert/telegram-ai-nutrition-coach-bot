@@ -125,8 +125,10 @@ func (b *Bot) send(chatID int64, text string) {
 		return
 	}
 	msg := tgbotapi.NewMessage(chatID, text)
-	msg.ParseMode = "HTML"
-	_, _ = b.api.Send(msg)
+	// Plain text: HTML mode broke /help because of "<food>" in the message body.
+	if _, err := b.api.Send(msg); err != nil {
+		b.logError(context.Background(), "telegram_send", err)
+	}
 }
 
 func (b *Bot) SendTo(chatID int64, text string) {

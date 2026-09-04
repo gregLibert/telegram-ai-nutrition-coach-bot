@@ -18,6 +18,7 @@ import (
 const (
 	cmdStart         = "/start"
 	cmdProfile       = "/profile"
+	cmdUpdateProfile = "/update_profile"
 	cmdWeight        = "/weight"
 	cmdWeightHistory = "/weight_history"
 	cmdForfait       = "/forfait"
@@ -29,6 +30,9 @@ const (
 	cmdWhatIf        = "/whatif"
 	cmdHelp          = "/help"
 )
+
+// Legacy French command kept as alias so existing Telegram habits still work.
+const cmdUpdateProfileFR = "/update_profil"
 
 type Service struct {
 	store        *db.Store
@@ -63,15 +67,25 @@ func (s *Service) Handle(ctx context.Context, in Input) (Response, error) {
 	if err != nil {
 		return Response{}, err
 	}
-	if in.UserID == 0 {
-		in.UserID = user.ID
-	}
+	return s.dispatch(ctx, user, in)
+}
 
+func (s *Service) HandleTelegram(ctx context.Context, telegramID, chatID int64, username, text, imagePath, voiceText string) (Response, error) {
+	user, err := s.store.GetOrCreateUser(ctx, telegramID, chatID, username)
+	if err != nil {
+		return Response{}, err
+	}
+	return s.dispatch(ctx, user, Input{
+		UserID: user.ID, Username: username, Text: text,
+		ImagePath: imagePath, VoiceText: voiceText,
+	})
+}
+
+func (s *Service) dispatch(ctx context.Context, user *db.User, in Input) (Response, error) {
 	text := strings.TrimSpace(in.Text)
 	if text == "" && in.VoiceText != "" {
 		text = strings.TrimSpace(in.VoiceText)
 	}
-
 	return s.routeCommand(ctx, user, text, in)
 }
 
@@ -82,6 +96,10 @@ func (s *Service) routeCommand(ctx context.Context, user *db.User, text string, 
 	if in.ImagePath != "" {
 		return s.handleMealPhoto(ctx, user, in.ImagePath)
 	}
+	// Slash commands that did not match must not be treated as meal descriptions.
+	if strings.HasPrefix(text, "/") {
+		return Response{Text: "Unknown command. Send /help to see available commands."}, nil
+	}
 	if text != "" {
 		return s.handleText(ctx, user, text, in.VoiceText != "")
 	}
@@ -89,41 +107,37 @@ func (s *Service) routeCommand(ctx context.Context, user *db.User, text string, 
 }
 
 func (s *Service) routeNamedCommand(ctx context.Context, user *db.User, text string) (Response, bool, error) {
-	switch {
-	case strings.HasPrefix(text, cmdStart):
+	cmd, args, isCmd := splitCommand(text)
+	if !isCmd {
+		return Response{}, false, nil
+	}
+	if resp, ok, err := s.routeProfileCommands(ctx, user, cmd); ok {
+		return resp, true, err
+	}
+	if resp, ok, err := s.routeMealCommands(ctx, user, cmd, args); ok {
+		return resp, true, err
+	}
+	return Response{}, false, nil
+}
+
+func (s *Service) routeProfileCommands(ctx context.Context, user *db.User, cmd string) (Response, bool, error) {
+	switch cmd {
+	case cmdStart:
 		resp, err := s.handleStart(ctx, user)
 		return resp, true, err
-	case strings.HasPrefix(text, cmdProfile):
+	case cmdProfile:
 		resp, err := s.handleProfile(ctx, user)
 		return resp, true, err
-	case strings.HasPrefix(text, cmdWeightHistory):
+	case cmdUpdateProfile, cmdUpdateProfileFR:
+		resp, err := s.handleUpdateProfile(ctx, user)
+		return resp, true, err
+	case cmdWeightHistory:
 		resp, err := s.handleWeightHistory(ctx, user)
 		return resp, true, err
-	case strings.HasPrefix(text, cmdWeight):
+	case cmdWeight:
 		resp, err := s.handleWeightPrompt(ctx, user)
 		return resp, true, err
-	case strings.HasPrefix(text, cmdForfait):
-		resp, err := s.handleForfaitMenu(ctx, user)
-		return resp, true, err
-	case strings.HasPrefix(text, cmdPortion):
-		resp, err := s.handlePortion(ctx, user, strings.TrimPrefix(text, cmdPortion))
-		return resp, true, err
-	case strings.HasPrefix(text, cmdWhatIf):
-		resp, err := s.handleWhatIf(ctx, user, strings.TrimSpace(strings.TrimPrefix(text, cmdWhatIf)))
-		return resp, true, err
-	case strings.HasPrefix(text, cmdConnectPolar):
-		resp, err := s.handleConnectPolar(ctx, user)
-		return resp, true, err
-	case strings.HasPrefix(text, cmdUndo):
-		resp, err := s.handleUndo(ctx, user)
-		return resp, true, err
-	case strings.HasPrefix(text, cmdRecipe):
-		resp, err := s.handleRecette(ctx, user, strings.TrimSpace(strings.TrimPrefix(text, cmdRecipe)))
-		return resp, true, err
-	case strings.HasPrefix(text, cmdSport):
-		resp, err := s.handleSportPrompt(ctx, user)
-		return resp, true, err
-	case strings.HasPrefix(text, cmdHelp):
+	case cmdHelp:
 		resp, err := s.handleHelp(ctx, user)
 		return resp, true, err
 	default:
@@ -131,27 +145,69 @@ func (s *Service) routeNamedCommand(ctx context.Context, user *db.User, text str
 	}
 }
 
-func (s *Service) HandleTelegram(ctx context.Context, telegramID, chatID int64, username, text, imagePath, voiceText string) (Response, error) {
-	user, err := s.store.GetOrCreateUser(ctx, telegramID, chatID, username)
-	if err != nil {
-		return Response{}, err
+func (s *Service) routeMealCommands(ctx context.Context, user *db.User, cmd, args string) (Response, bool, error) {
+	switch cmd {
+	case cmdForfait:
+		resp, err := s.handleForfaitMenu(ctx, user)
+		return resp, true, err
+	case cmdPortion:
+		resp, err := s.handlePortion(ctx, user, args)
+		return resp, true, err
+	case cmdWhatIf:
+		resp, err := s.handleWhatIf(ctx, user, args)
+		return resp, true, err
+	case cmdConnectPolar:
+		resp, err := s.handleConnectPolar(ctx, user)
+		return resp, true, err
+	case cmdUndo:
+		resp, err := s.handleUndo(ctx, user)
+		return resp, true, err
+	case cmdRecipe:
+		resp, err := s.handleRecette(ctx, user, args)
+		return resp, true, err
+	case cmdSport:
+		resp, err := s.handleSportPrompt(ctx, user)
+		return resp, true, err
+	default:
+		return Response{}, false, nil
 	}
-	return s.Handle(ctx, Input{
-		UserID: user.ID, Username: username, Text: text,
-		ImagePath: imagePath, VoiceText: voiceText,
-	})
+}
+
+// splitCommand extracts "/cmd" and args from Telegram text, stripping "@BotName" suffixes.
+func splitCommand(text string) (cmd, args string, ok bool) {
+	text = strings.TrimSpace(text)
+	if text == "" || text[0] != '/' {
+		return "", "", false
+	}
+	parts := strings.SplitN(text, " ", 2)
+	cmd = strings.ToLower(parts[0])
+	if at := strings.IndexByte(cmd, '@'); at >= 0 {
+		cmd = cmd[:at]
+	}
+	if len(parts) > 1 {
+		args = strings.TrimSpace(parts[1])
+	}
+	return cmd, args, true
 }
 
 func (s *Service) handleStart(ctx context.Context, user *db.User) (Response, error) {
 	_, err := s.store.GetProfile(ctx, user.ID)
 	if err == nil {
-		return Response{Text: "Welcome back! Use /profile to view your targets or log a meal by describing it."}, nil
+		return Response{Text: "Welcome back! Use /profile to view your targets or log a meal by describing it.\nSend /update_profile to re-run onboarding."}, nil
 	}
 	if err := s.store.UpdateUserState(ctx, user.ID, state.OnboardingLanguage, state.Data{}); err != nil {
 		return Response{}, err
 	}
 	s.logTransition(ctx, user.ID, user.State, state.OnboardingLanguage, cmdStart)
 	return Response{Text: "Welcome! Let's set up your profile.\n\nPreferred language? (en / fr)"}, nil
+}
+
+func (s *Service) handleUpdateProfile(ctx context.Context, user *db.User) (Response, error) {
+	if err := s.store.UpdateUserState(ctx, user.ID, state.OnboardingLanguage, state.Data{}); err != nil {
+		return Response{}, err
+	}
+	s.logTransition(ctx, user.ID, user.State, state.OnboardingLanguage, cmdUpdateProfile)
+	return Response{Text: "Let's update your profile.\n\nPreferred language? (en / fr)"}, nil
 }
 
 func (s *Service) handleSportPrompt(ctx context.Context, user *db.User) (Response, error) {
@@ -403,6 +459,7 @@ func (s *Service) handleHelp(_ context.Context, _ *db.User) (Response, error) {
 	msg := "📖 Nutrition Coach — Commands\n\n" +
 		"👤 Profile\n" +
 		"  /start — Begin onboarding\n" +
+		"  /update_profile — Re-run onboarding\n" +
 		"  /profile — View daily targets\n\n" +
 		"⚖️ Weight\n" +
 		"  /weight — Log current weight\n" +
@@ -410,7 +467,7 @@ func (s *Service) handleHelp(_ context.Context, _ *db.User) (Response, error) {
 		"🍽 Meals\n" +
 		"  Send text, photo, or voice — Log a meal\n" +
 		"  /undo — Delete last logged meal\n" +
-		"  /whatif <food> — Simulate meal impact (not saved)\n" +
+		"  /whatif food — Simulate meal impact (not saved)\n" +
 		"  /forfait — Social meal fallback presets\n\n" +
 		"👨‍🍳 Coaching\n" +
 		"  /portion — Smart portion solver\n" +

@@ -127,6 +127,7 @@ docker compose up -d --build
 | Command | Description |
 |---|---|
 | `/start` | Onboarding flow (includes language preference) |
+| `/update_profile` | Re-run onboarding (`/update_profil` still accepted) |
 | `/profile` | View current targets |
 | `/weight` | Log weight |
 | `/weight_history` | Weight history with 7-day avg |
