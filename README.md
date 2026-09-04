@@ -47,6 +47,7 @@ go test -v -coverprofile=coverage.out ./...
 
 | Variable | Required | Description |
 |---|---|---|
+| `ALLOWED_USERS` | Bot mode (production) | Comma-separated Telegram user IDs allowed to use the bot. Empty = deny all. |
 | `OPENROUTER_API_KEY` | Yes (for LLM) | OpenRouter API key |
 | `OPENAI_API_KEY` | Bot mode (voice) | OpenAI API key for Whisper STT |
 | `TELEGRAM_BOT_TOKEN` | Bot mode only | Telegram bot token |

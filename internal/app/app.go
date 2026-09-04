@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/coach"
+	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/config"
 	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/db"
 	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/llm"
 	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/scheduler"
@@ -30,18 +31,26 @@ type Config struct {
 	PolarClientID    string
 	PolarSecret      string
 	PolarRedirectURI string
+	AllowedUsers     config.AllowList
 }
 
 func DefaultConfig() Config {
+	allowed, err := config.ParseAllowedUsers(os.Getenv("ALLOWED_USERS"))
+	if err != nil {
+		slog.Error("invalid ALLOWED_USERS; denying all Telegram users", "error", err)
+		allowed = config.AllowList{}
+	}
 	return Config{
 		DBPath:           envOr("DB_PATH", "data/coach.db"),
 		Timezone:         envOr("TIMEZONE", "Europe/Paris"),
 		HTTPAddr:         envOr("HTTP_ADDR", ":8080"),
+		TelegramToken:    os.Getenv("TELEGRAM_BOT_TOKEN"),
 		OpenRouterAPIKey: os.Getenv("OPENROUTER_API_KEY"),
 		OpenAIAPIKey:     os.Getenv("OPENAI_API_KEY"),
 		PolarClientID:    os.Getenv("POLAR_CLIENT_ID"),
 		PolarSecret:      os.Getenv("POLAR_CLIENT_SECRET"),
 		PolarRedirectURI: os.Getenv("POLAR_REDIRECT_URI"),
+		AllowedUsers:     allowed,
 	}
 }
 
@@ -70,6 +79,11 @@ func New(cfg Config) (*App, error) {
 	}
 
 	logger := trace.New(os.Stdout, cfg.LogLevel)
+	if len(cfg.AllowedUsers) == 0 {
+		logger.Warn("ALLOWED_USERS is empty; all Telegram access will be denied")
+	} else {
+		logger.Info("telegram allowlist loaded", "count", len(cfg.AllowedUsers))
+	}
 
 	auditFn := func(ctx context.Context, entry llm.AuditEntry) error {
 		var uid *int64
@@ -114,7 +128,7 @@ func (a *App) Close() error {
 func (a *App) RunBot(ctx context.Context) error {
 	whisper := llm.NewWhisperClient(a.config.OpenAIAPIKey)
 
-	bot, err := telegram.New(a.config.TelegramToken, a.coach, a.logger, whisper)
+	bot, err := telegram.New(a.config.TelegramToken, a.coach, a.logger, whisper, a.config.AllowedUsers)
 	if err != nil {
 		return err
 	}

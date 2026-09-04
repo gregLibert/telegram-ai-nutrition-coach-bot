@@ -12,19 +12,21 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/coach"
+	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/config"
 	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/llm"
 	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/trace"
 )
 
 type Bot struct {
-	api        *tgbotapi.BotAPI
-	coach      *coach.Service
-	logger     *trace.Logger
-	whisper    *llm.WhisperClient
-	httpClient *http.Client
+	api          *tgbotapi.BotAPI
+	coach        *coach.Service
+	logger       *trace.Logger
+	whisper      *llm.WhisperClient
+	httpClient   *http.Client
+	allowedUsers config.AllowList
 }
 
-func New(token string, coachSvc *coach.Service, logger *trace.Logger, whisper *llm.WhisperClient) (*Bot, error) {
+func New(token string, coachSvc *coach.Service, logger *trace.Logger, whisper *llm.WhisperClient, allowedUsers config.AllowList) (*Bot, error) {
 	if token == "" {
 		token = os.Getenv("TELEGRAM_BOT_TOKEN")
 	}
@@ -36,9 +38,13 @@ func New(token string, coachSvc *coach.Service, logger *trace.Logger, whisper *l
 	if err != nil {
 		return nil, fmt.Errorf("create bot: %w", err)
 	}
+	if allowedUsers == nil {
+		allowedUsers = config.AllowList{}
+	}
 	return &Bot{
 		api: api, coach: coachSvc, logger: logger, whisper: whisper,
-		httpClient: &http.Client{Timeout: 60 * time.Second},
+		httpClient:   &http.Client{Timeout: 60 * time.Second},
+		allowedUsers: allowedUsers,
 	}, nil
 }
 
@@ -73,6 +79,15 @@ func (b *Bot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
 		return
 	}
 
+	telegramID := int64(user.ID)
+	if !b.allowedUsers.IsAllowed(telegramID) {
+		if b.logger != nil {
+			b.logger.Warn("Unauthorized access attempt", "telegram_id", telegramID)
+		}
+		b.send(chatID, "⛔ Unauthorized access.")
+		return
+	}
+
 	text := msg.Text
 	var imagePath, voiceText string
 
@@ -87,7 +102,7 @@ func (b *Bot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
 		}
 	}
 
-	resp, err := b.coach.HandleTelegram(ctx, int64(user.ID), chatID, user.UserName, text, imagePath, voiceText)
+	resp, err := b.coach.HandleTelegram(ctx, telegramID, chatID, user.UserName, text, imagePath, voiceText)
 	if err != nil {
 		b.send(chatID, fmt.Sprintf("Error: %v", err))
 		return
