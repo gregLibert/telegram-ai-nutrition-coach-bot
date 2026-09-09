@@ -644,61 +644,6 @@ func (s *Service) handleSportCalories(ctx context.Context, user *db.User, text s
 	)}, nil
 }
 
-func (s *Service) DailyRecap(ctx context.Context, userID int64) (string, error) {
-	targets, err := s.store.EffectiveTargets(ctx, userID)
-	if err != nil {
-		return "", err
-	}
-	progress, err := s.store.DailyProgressNow(ctx, userID)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf(
-		"📋 Daily Recap\n\nCalories: %.0f / %.0f kcal\nProtein: %.0f / %.0f g\nFat: %.0f / %.0f g\nCarbs: %.0f / %.0f g",
-		progress.Calories, targets.TargetCalories,
-		progress.ProteinG, targets.TargetProteinG,
-		progress.FatG, targets.TargetFatG,
-		progress.CarbsG, targets.TargetCarbsG,
-	), nil
-}
-
-func (s *Service) WeeklyReport(ctx context.Context, userID int64) (string, error) {
-	totalCal, avgCal, days, err := s.store.WeeklyMealSummary(ctx, userID)
-	if err != nil {
-		return "", err
-	}
-
-	entries, _ := s.store.ListWeightEntries(ctx, userID, 100)
-	weights := make([]float64, len(entries))
-	for i, e := range entries {
-		weights[i] = e.WeightKg
-	}
-	stats := domain.WeightStatsFromEntries(weights)
-
-	lang := "en"
-	if u, err := s.store.GetUserByID(ctx, userID); err == nil {
-		lang = u.Language
-	}
-
-	systemPrompt := withLanguage(
-		"You are an expert nutrition coach. Provide a concise, actionable weekly summary.",
-		lang,
-	)
-	userPrompt := fmt.Sprintf(
-		"Weekly data: %d logging days, %.0f total kcal (avg %.0f/day). Weight delta: %+.1f kg, 7-day avg: %.2f kg.",
-		days, totalCal, avgCal, stats.DeltaFromStart, stats.MovingAvg7DayKg,
-	)
-
-	raw, err := s.llm.CompleteText(ctx, &userID, "weekly_report", llm.ModelReason, systemPrompt, userPrompt)
-	if err != nil {
-		return fmt.Sprintf(
-			"📈 Weekly Report\n\nDays logged: %d\nAvg calories: %.0f kcal/day\nWeight delta: %+.1f kg",
-			days, avgCal, stats.DeltaFromStart,
-		), nil
-	}
-	return "📈 Weekly Report\n\n" + raw, nil
-}
-
 func (s *Service) InactivityReminder(mealType string) string {
 	switch mealType {
 	case "lunch":

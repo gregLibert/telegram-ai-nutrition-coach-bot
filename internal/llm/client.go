@@ -314,3 +314,36 @@ var RecipeOptionsSchema = map[string]any{
 	"required":             []string{"options"},
 	"additionalProperties": false,
 }
+
+var NutritionAnalysisSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"congratulations":   map[string]any{"type": "string"},
+		"streak_maintained": map[string]any{"type": "boolean"},
+		"top_aligned_meals": map[string]any{
+			"type":  "array",
+			"items": map[string]any{"type": "string"},
+		},
+		"improvements": map[string]any{
+			"type": "array",
+			"items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"meal_name":   map[string]any{"type": "string"},
+					"issue":       map[string]any{"type": "string"},
+					"alternative": map[string]any{"type": "string"},
+				},
+				"required":             []string{"meal_name", "issue", "alternative"},
+				"additionalProperties": false,
+			},
+		},
+		"grocery_hints": map[string]any{
+			"type":  "array",
+			"items": map[string]any{"type": "string"},
+		},
+	},
+	"required": []string{
+		"congratulations", "streak_maintained", "top_aligned_meals", "improvements", "grocery_hints",
+	},
+	"additionalProperties": false,
+}
