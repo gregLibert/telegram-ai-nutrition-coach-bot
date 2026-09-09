@@ -81,11 +81,7 @@ func (w *WhisperClient) TranscribeFile(ctx context.Context, filePath string) (st
 	if err != nil {
 		return "", fmt.Errorf("whisper request: %w", err)
 	}
-	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			_ = closeErr
-		}
-	}()
+	defer closeHTTPBody(resp.Body)
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {

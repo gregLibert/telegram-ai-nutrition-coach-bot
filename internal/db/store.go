@@ -331,7 +331,7 @@ func (s *Store) ListWeightEntries(ctx context.Context, userID int64, limit int) 
 	if err != nil {
 		return nil, fmt.Errorf("list weights: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer closeRows(rows)
 
 	var entries []WeightEntry
 	for rows.Next() {
@@ -494,7 +494,7 @@ func (s *Store) ListUsersWithTelegram(ctx context.Context) ([]User, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
+	defer closeRows(rows)
 
 	var users []User
 	for rows.Next() {
@@ -618,7 +618,7 @@ func (s *Store) WeeklyMealSummary(ctx context.Context, userID int64) (totalCal, 
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	defer func() { _ = rows.Close() }()
+	defer closeRows(rows)
 
 	dailyTotals := make(map[string]float64)
 	for rows.Next() {

@@ -21,7 +21,12 @@ const (
 	polarAuthURL       = "https://flow.polar.com/oauth2/authorization"
 	polarOAuthEndpoint = "https://polarremote.com/v2/oauth2/token" //nolint:gosec // public OAuth endpoint URL
 	polarScope         = "accesslink.read_all"
+	httpTimeout        = 30 * time.Second
 )
+
+// polarUsersRegisterURL is the Polar Accesslink user registration endpoint.
+// Overridable in tests.
+var polarUsersRegisterURL = polarBaseURL + "/users"
 
 type OAuthConfig struct {
 	ClientID     string
@@ -61,14 +66,16 @@ func AuthURL(cfg OAuthConfig, userID int64) (string, error) {
 }
 
 type TokenExchanger struct {
-	cfg    OAuthConfig
-	client *http.Client
+	cfg      OAuthConfig
+	client   *http.Client
+	tokenURL string
 }
 
 func NewTokenExchanger(cfg OAuthConfig) *TokenExchanger {
 	return &TokenExchanger{
-		cfg:    cfg,
-		client: &http.Client{Timeout: 30 * time.Second},
+		cfg:      cfg,
+		client:   &http.Client{Timeout: httpTimeout},
+		tokenURL: polarOAuthEndpoint,
 	}
 }
 
@@ -82,7 +89,11 @@ func (t *TokenExchanger) Refresh(ctx context.Context, refreshToken string) (*oau
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, polarOAuthEndpoint, strings.NewReader(data.Encode()))
+	endpoint := t.tokenURL
+	if endpoint == "" {
+		endpoint = polarOAuthEndpoint
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, err
 	}
@@ -93,14 +104,18 @@ func (t *TokenExchanger) Refresh(ctx context.Context, refreshToken string) (*oau
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeHTTPBody(resp.Body)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("polar token refresh status %d: %s", resp.StatusCode, string(body))
+	return parseOAuthTokenResponse(resp.StatusCode, body)
+}
+
+func parseOAuthTokenResponse(statusCode int, body []byte) (*oauth2.Token, error) {
+	if statusCode != http.StatusOK {
+		return nil, fmt.Errorf("polar token refresh status %d: %s", statusCode, string(body))
 	}
 
 	var parsed struct {
@@ -126,11 +141,11 @@ func (t *TokenExchanger) Refresh(ctx context.Context, refreshToken string) (*oau
 
 func RegisterPolarUser(ctx context.Context, accessToken, memberID string, client *http.Client) error {
 	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
+		client = &http.Client{Timeout: httpTimeout}
 	}
 
 	payload := fmt.Sprintf(`{"member-id":%q}`, memberID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, polarBaseURL+"/users", strings.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, polarUsersRegisterURL, strings.NewReader(payload))
 	if err != nil {
 		return err
 	}
@@ -138,20 +153,22 @@ func RegisterPolarUser(ctx context.Context, accessToken, memberID string, client
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := client.Do(req) //nolint:gosec // request targets fixed Polar Accesslink API
+	resp, err := client.Do(req) //nolint:gosec // request targets Polar Accesslink API (or test server)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeHTTPBody(resp.Body)
 
-	if resp.StatusCode == http.StatusConflict {
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusCreated, http.StatusConflict:
 		return nil
-	}
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
+	default:
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("polar register status %d: read body: %w", resp.StatusCode, err)
+		}
 		return fmt.Errorf("polar register status %d: %s", resp.StatusCode, string(body))
 	}
-	return nil
 }
 
 func SaveToken(ctx context.Context, store *db.Store, userID int64, token *oauth2.Token) error {

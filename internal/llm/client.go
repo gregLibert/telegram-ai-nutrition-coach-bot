@@ -184,9 +184,7 @@ func (c *Client) doRequest(ctx context.Context, body []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("http request: %w", err)
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
+	defer closeHTTPBody(resp.Body)
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {

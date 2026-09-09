@@ -2,36 +2,74 @@ package domain
 
 import "math"
 
+// Activity (NEAT) multipliers applied to BMR to estimate TDEE.
+const (
+	activityMultSedentary  = 1.2
+	activityMultLight      = 1.375
+	activityMultModerate   = 1.55
+	activityMultActive     = 1.725
+	activityMultVeryActive = 1.9
+)
+
+// AdolescentMaxAgeExclusive is the age threshold: ages below this use Schofield.
+const AdolescentMaxAgeExclusive = 18
+
+// Mifflin-St Jeor equation coefficients (adults).
+const (
+	mifflinWeightCoeff  = 10.0
+	mifflinHeightCoeff  = 6.25
+	mifflinAgeCoeff     = 5.0
+	mifflinMaleOffset   = 5.0
+	mifflinFemaleOffset = -161.0
+)
+
+// Schofield equation coefficients (ages 10–17).
+const (
+	schofieldFemaleWeightCoeff = 12.2
+	schofieldFemaleIntercept   = 746.0
+	schofieldMaleWeightCoeff   = 17.5
+	schofieldMaleIntercept     = 651.0
+)
+
+// Macro energy densities (kcal per gram).
+const (
+	kcalPerGramProtein = 4.0
+	kcalPerGramCarb    = 4.0
+	kcalPerGramFat     = 9.0
+)
+
+const weightMovingAvgWindowDays = 7
+
 func activityMultiplier(level ActivityLevel) float64 {
 	switch level {
 	case ActivitySedentary:
-		return 1.2
+		return activityMultSedentary
 	case ActivityLight:
-		return 1.375
+		return activityMultLight
 	case ActivityModerate:
-		return 1.55
+		return activityMultModerate
 	case ActivityActive:
-		return 1.725
+		return activityMultActive
 	case ActivityVeryActive:
-		return 1.9
+		return activityMultVeryActive
 	default:
-		return 1.2
+		return activityMultSedentary
 	}
 }
 
 // CalculateBMR uses Schofield for adolescents (age < 18) and Mifflin-St Jeor for adults.
 func CalculateBMR(weightKg, heightCm float64, age int, gender Gender) float64 {
-	if age < 18 {
+	if age < AdolescentMaxAgeExclusive {
 		return calculateSchofieldBMR(weightKg, gender)
 	}
-	base := 10*weightKg + 6.25*heightCm - 5*float64(age)
+	base := mifflinWeightCoeff*weightKg + mifflinHeightCoeff*heightCm - mifflinAgeCoeff*float64(age)
 	switch gender {
 	case GenderMale:
-		return base + 5
+		return base + mifflinMaleOffset
 	case GenderFemale:
-		return base - 161
+		return base + mifflinFemaleOffset
 	default:
-		return base + 5
+		return base + mifflinMaleOffset
 	}
 }
 
@@ -39,9 +77,9 @@ func CalculateBMR(weightKg, heightCm float64, age int, gender Gender) float64 {
 func calculateSchofieldBMR(weightKg float64, gender Gender) float64 {
 	switch gender {
 	case GenderFemale:
-		return 12.2*weightKg + 746
+		return schofieldFemaleWeightCoeff*weightKg + schofieldFemaleIntercept
 	default: // male / boys
-		return 17.5*weightKg + 651
+		return schofieldMaleWeightCoeff*weightKg + schofieldMaleIntercept
 	}
 }
 
@@ -71,14 +109,14 @@ func CalculateMacroTargets(input ProfileInput) MacroTargets {
 	}
 
 	proteinG := ProteinPerKg * targetWeight
-	proteinCal := proteinG * 4
+	proteinCal := proteinG * kcalPerGramProtein
 	fatCal := targetCalories * FatCalorieFraction
-	fatG := fatCal / 9
+	fatG := fatCal / kcalPerGramFat
 	carbCal := targetCalories - proteinCal - fatCal
 	if carbCal < 0 {
 		carbCal = 0
 	}
-	carbG := carbCal / 4
+	carbG := carbCal / kcalPerGramCarb
 
 	return MacroTargets{
 		BMR:            round1(bmr),
@@ -99,13 +137,13 @@ func ApplyForfaitAdjustment(targets MacroTargets, dailyOffset float64) MacroTarg
 	adjusted.TargetCalories = round1(targets.TargetCalories - dailyOffset)
 
 	fatCal := adjusted.TargetCalories * FatCalorieFraction
-	proteinCal := targets.TargetProteinG * 4
+	proteinCal := targets.TargetProteinG * kcalPerGramProtein
 	carbCal := adjusted.TargetCalories - proteinCal - fatCal
 	if carbCal < 0 {
 		carbCal = 0
 	}
-	adjusted.TargetFatG = round1(fatCal / 9)
-	adjusted.TargetCarbsG = round1(carbCal / 4)
+	adjusted.TargetFatG = round1(fatCal / kcalPerGramFat)
+	adjusted.TargetCarbsG = round1(carbCal / kcalPerGramCarb)
 	return adjusted
 }
 
@@ -125,8 +163,8 @@ func WeightMovingAverage(weights []float64) float64 {
 		return 0
 	}
 	window := weights
-	if len(weights) > 7 {
-		window = weights[len(weights)-7:]
+	if len(weights) > weightMovingAvgWindowDays {
+		window = weights[len(weights)-weightMovingAvgWindowDays:]
 	}
 	sum := 0.0
 	for _, w := range window {

@@ -63,7 +63,7 @@ func (s *Store) ListPolarIntegrations(ctx context.Context) ([]UserIntegration, e
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
+	defer closeRows(rows)
 
 	var integrations []UserIntegration
 	for rows.Next() {

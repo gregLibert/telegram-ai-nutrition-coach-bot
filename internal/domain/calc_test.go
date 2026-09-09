@@ -195,28 +195,157 @@ func TestShouldRecalculateTargets(t *testing.T) {
 }
 
 func TestApplyForfaitAdjustment(t *testing.T) {
-	base := MacroTargets{
-		TargetCalories: 2000,
-		TargetProteinG: 120,
-		TargetFatG:     69,
-		TargetCarbsG:   200,
+	tests := []struct {
+		name   string
+		base   MacroTargets
+		offset float64
+		want   float64
+	}{
+		{
+			name: "applies daily offset",
+			base: MacroTargets{
+				TargetCalories: 2000,
+				TargetProteinG: 120,
+				TargetFatG:     69,
+				TargetCarbsG:   200,
+			},
+			offset: ForfaitDailyOffset,
+			want:   1900,
+		},
+		{
+			name: "zero offset is no-op",
+			base: MacroTargets{
+				TargetCalories: 2000,
+				TargetProteinG: 120,
+				TargetFatG:     69,
+				TargetCarbsG:   200,
+			},
+			offset: 0,
+			want:   2000,
+		},
+		{
+			name: "negative offset is no-op",
+			base: MacroTargets{
+				TargetCalories: 2000,
+				TargetProteinG: 120,
+				TargetFatG:     69,
+				TargetCarbsG:   200,
+			},
+			offset: -50,
+			want:   2000,
+		},
 	}
-	adjusted := ApplyForfaitAdjustment(base, ForfaitDailyOffset)
-	if adjusted.TargetCalories != 1900 {
-		t.Errorf("adjusted calories = %v, want 1900", adjusted.TargetCalories)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			adjusted := ApplyForfaitAdjustment(tt.base, tt.offset)
+			if adjusted.TargetCalories != tt.want {
+				t.Errorf("adjusted calories = %v, want %v", adjusted.TargetCalories, tt.want)
+			}
+		})
 	}
 }
 
 func TestRemainingMacros(t *testing.T) {
-	targets := MacroTargets{
-		TargetCalories: 2000,
-		TargetProteinG: 120,
-		TargetFatG:     69,
-		TargetCarbsG:   200,
+	tests := []struct {
+		name     string
+		targets  MacroTargets
+		consumed DailyProgress
+		wantCals float64
+		wantProt float64
+	}{
+		{
+			name: "partial day",
+			targets: MacroTargets{
+				TargetCalories: 2000,
+				TargetProteinG: 120,
+				TargetFatG:     69,
+				TargetCarbsG:   200,
+			},
+			consumed: DailyProgress{Calories: 800, ProteinG: 40, FatG: 25, CarbsG: 80},
+			wantCals: 1200,
+			wantProt: 80,
+		},
+		{
+			name: "over target goes negative",
+			targets: MacroTargets{
+				TargetCalories: 2000,
+				TargetProteinG: 120,
+				TargetFatG:     69,
+				TargetCarbsG:   200,
+			},
+			consumed: DailyProgress{Calories: 2500, ProteinG: 150, FatG: 80, CarbsG: 250},
+			wantCals: -500,
+			wantProt: -30,
+		},
 	}
-	consumed := DailyProgress{Calories: 800, ProteinG: 40, FatG: 25, CarbsG: 80}
-	remaining := RemainingMacros(targets, consumed)
-	if remaining.TargetCalories != 1200 {
-		t.Errorf("remaining calories = %v, want 1200", remaining.TargetCalories)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			remaining := RemainingMacros(tt.targets, tt.consumed)
+			if remaining.TargetCalories != tt.wantCals {
+				t.Errorf("remaining calories = %v, want %v", remaining.TargetCalories, tt.wantCals)
+			}
+			if remaining.TargetProteinG != tt.wantProt {
+				t.Errorf("remaining protein = %v, want %v", remaining.TargetProteinG, tt.wantProt)
+			}
+		})
+	}
+}
+
+func TestWeightStatsFromEntries(t *testing.T) {
+	tests := []struct {
+		name        string
+		weights     []float64
+		wantCount   int
+		wantDelta   float64
+		wantCurrent float64
+	}{
+		{name: "empty", weights: nil, wantCount: 0},
+		{name: "single", weights: []float64{80}, wantCount: 1, wantCurrent: 80, wantDelta: 0},
+		{name: "progress", weights: []float64{85, 84, 83}, wantCount: 3, wantCurrent: 83, wantDelta: -2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := WeightStatsFromEntries(tt.weights)
+			if got.EntryCount != tt.wantCount {
+				t.Errorf("count = %d, want %d", got.EntryCount, tt.wantCount)
+			}
+			if tt.wantCount == 0 {
+				return
+			}
+			if got.CurrentKg != tt.wantCurrent {
+				t.Errorf("current = %v, want %v", got.CurrentKg, tt.wantCurrent)
+			}
+			if got.DeltaFromStart != tt.wantDelta {
+				t.Errorf("delta = %v, want %v", got.DeltaFromStart, tt.wantDelta)
+			}
+		})
+	}
+}
+
+func TestCalculateMacroTargetsFallbackTargetWeight(t *testing.T) {
+	input := ProfileInput{
+		Age: 30, HeightCm: 180, WeightKg: 80, TargetWeightKg: 0,
+		Gender: GenderMale, ActivityLevel: ActivityModerate, WeightGoal: GoalKeep,
+	}
+	got := CalculateMacroTargets(input)
+	wantProtein := ProteinPerKg * input.WeightKg
+	if math.Abs(got.TargetProteinG-wantProtein) > 0.2 {
+		t.Fatalf("protein = %v, want %v (fallback to current weight)", got.TargetProteinG, wantProtein)
+	}
+}
+
+func TestCalculateMacroTargetsUnknownActivityUsesSedentary(t *testing.T) {
+	input := ProfileInput{
+		Age: 30, HeightCm: 180, WeightKg: 80, TargetWeightKg: 80,
+		Gender: GenderMale, ActivityLevel: ActivityLevel("unknown"), WeightGoal: GoalKeep,
+	}
+	got := CalculateMacroTargets(input)
+	bmr := CalculateBMR(input.WeightKg, input.HeightCm, input.Age, input.Gender)
+	wantTDEE := round1(bmr * activityMultSedentary)
+	if got.TDEE != wantTDEE {
+		t.Fatalf("tdee = %v, want sedentary fallback %v", got.TDEE, wantTDEE)
 	}
 }

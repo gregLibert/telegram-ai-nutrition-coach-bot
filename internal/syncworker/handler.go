@@ -134,7 +134,7 @@ func FetchPolarCalories(ctx context.Context, accessToken, date string, client *h
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeHTTPBody(resp.Body)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
