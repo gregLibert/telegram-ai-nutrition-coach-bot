@@ -11,6 +11,7 @@ import (
 	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/db"
 	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/domain"
 	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/llm"
+	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/nutrition"
 	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/state"
 	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/trace"
 )
@@ -38,11 +39,14 @@ type Service struct {
 	store        *db.Store
 	llm          *llm.Client
 	logger       *trace.Logger
+	nutrition    *nutrition.Client
+	notify       func(chatID int64, text string)
 	polarAuthURL func(userID int64) (string, error)
 }
 
 type Input struct {
 	UserID    int64
+	ChatID    int64
 	Username  string
 	Text      string
 	ImagePath string
@@ -55,11 +59,20 @@ type Response struct {
 }
 
 func New(store *db.Store, llmClient *llm.Client, logger *trace.Logger) *Service {
-	return &Service{store: store, llm: llmClient, logger: logger}
+	return &Service{
+		store:     store,
+		llm:       llmClient,
+		logger:    logger,
+		nutrition: nutrition.NewClient(),
+	}
 }
 
 func (s *Service) SetPolarAuthURL(fn func(userID int64) (string, error)) {
 	s.polarAuthURL = fn
+}
+
+func (s *Service) SetNotifier(fn func(chatID int64, text string)) {
+	s.notify = fn
 }
 
 func (s *Service) Handle(ctx context.Context, in Input) (Response, error) {
@@ -76,7 +89,7 @@ func (s *Service) HandleTelegram(ctx context.Context, telegramID, chatID int64, 
 		return Response{}, err
 	}
 	return s.dispatch(ctx, user, Input{
-		UserID: user.ID, Username: username, Text: text,
+		UserID: user.ID, ChatID: chatID, Username: username, Text: text,
 		ImagePath: imagePath, VoiceText: voiceText,
 	})
 }
@@ -101,7 +114,7 @@ func (s *Service) routeCommand(ctx context.Context, user *db.User, text string, 
 		return Response{Text: "Unknown command. Send /help to see available commands."}, nil
 	}
 	if text != "" {
-		return s.handleText(ctx, user, text, in.VoiceText != "")
+		return s.handleText(ctx, user, text, in.VoiceText != "", in.ChatID)
 	}
 	return Response{Text: "Send a command or describe your meal."}, nil
 }
@@ -306,7 +319,7 @@ func (s *Service) handleConnectPolar(ctx context.Context, user *db.User) (Respon
 	)}, nil
 }
 
-func (s *Service) handleText(ctx context.Context, user *db.User, text string, isVoice bool) (Response, error) {
+func (s *Service) handleText(ctx context.Context, user *db.User, text string, isVoice bool, chatID int64) (Response, error) {
 	if resp, ok, err := s.handleOnboardingText(ctx, user, text); ok {
 		return resp, err
 	}
@@ -324,7 +337,7 @@ func (s *Service) handleText(ctx context.Context, user *db.User, text string, is
 		if isVoice {
 			source = "voice"
 		}
-		return s.logMealFromText(ctx, user, text, source)
+		return s.logMealFromText(ctx, user, text, source, chatID)
 	}
 }
 
@@ -455,13 +468,6 @@ func (s *Service) applyForfait(ctx context.Context, user *db.User, text string) 
 	)}, nil
 }
 
-func (s *Service) logMealFromText(ctx context.Context, user *db.User, text, source string) (Response, error) {
-	if _, err := s.store.GetProfile(ctx, user.ID); err != nil {
-		return Response{Text: "Complete /start onboarding first."}, nil
-	}
-	return s.analyzeAndLogMeal(ctx, user.ID, text, source, user.Language)
-}
-
 func (s *Service) handleMealPhoto(ctx context.Context, user *db.User, imagePath string) (Response, error) {
 	if _, err := s.store.GetProfile(ctx, user.ID); err != nil {
 		return Response{Text: "Complete /start onboarding first."}, nil
@@ -483,28 +489,6 @@ func (s *Service) handleMealPhoto(ctx context.Context, user *db.User, imagePath 
 		return Response{}, err
 	}
 	return s.formatMealResponse(ctx, user.ID, estimate)
-}
-
-func (s *Service) analyzeAndLogMeal(ctx context.Context, userID int64, description, source, lang string) (Response, error) {
-	systemPrompt := withLanguage(mealTextSystemPrompt(), lang)
-	userPrompt := fmt.Sprintf("Estimate this meal: %s", description)
-
-	raw, err := s.llm.CompleteJSON(ctx, &userID, "meal_text", llm.ModelReason, systemPrompt, userPrompt, llm.MealEstimateSchema)
-	if err != nil {
-		return responseFromLLMError(err, "meal analysis")
-	}
-
-	var estimate domain.MealEstimate
-	if err := json.Unmarshal([]byte(raw), &estimate); err != nil {
-		return Response{}, fmt.Errorf("parse meal estimate: %w", err)
-	}
-	if estimate.Description == "" {
-		estimate.Description = description
-	}
-	if err := s.store.AddMeal(ctx, userID, estimate, source); err != nil {
-		return Response{}, err
-	}
-	return s.formatMealResponse(ctx, userID, estimate)
 }
 
 func (s *Service) formatMealResponse(ctx context.Context, userID int64, meal domain.MealEstimate) (Response, error) {

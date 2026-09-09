@@ -34,37 +34,26 @@ func New(token string, coachSvc *coach.Service, logger *trace.Logger, whisper *l
 		return nil, fmt.Errorf("TELEGRAM_BOT_TOKEN not set")
 	}
 
-	api, err := tgbotapi.NewBotAPI(token)
+	api, err := connectBotAPI(context.Background(), token, logger)
 	if err != nil {
-		return nil, fmt.Errorf("create bot: %w", err)
+		return nil, err
 	}
 	if allowedUsers == nil {
 		allowedUsers = config.AllowList{}
 	}
-	return &Bot{
+	bot := &Bot{
 		api: api, coach: coachSvc, logger: logger, whisper: whisper,
 		httpClient:   &http.Client{Timeout: 60 * time.Second},
 		allowedUsers: allowedUsers,
-	}, nil
+	}
+	if coachSvc != nil {
+		coachSvc.SetNotifier(bot.SendTo)
+	}
+	return bot, nil
 }
 
 func (b *Bot) Run(ctx context.Context) error {
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
-	updates := b.api.GetUpdatesChan(u)
-
-	for {
-		select {
-		case <-ctx.Done():
-			b.api.StopReceivingUpdates()
-			return nil
-		case update, ok := <-updates:
-			if !ok {
-				return nil
-			}
-			b.handleUpdate(ctx, update)
-		}
-	}
+	return b.pollUpdates(ctx)
 }
 
 func (b *Bot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
@@ -125,7 +114,6 @@ func (b *Bot) send(chatID int64, text string) {
 		return
 	}
 	msg := tgbotapi.NewMessage(chatID, text)
-	// Plain text: HTML mode broke /help because of "<food>" in the message body.
 	if _, err := b.api.Send(msg); err != nil {
 		b.logError(context.Background(), "telegram_send", err)
 	}

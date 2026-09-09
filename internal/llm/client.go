@@ -16,12 +16,14 @@ const (
 	ModelVision   = "qwen/qwen-2.5-vl-72b-instruct"
 	ModelReason   = "deepseek/deepseek-chat"
 	openRouterURL = "https://openrouter.ai/api/v1/chat/completions"
+	httpTimeout   = 120 * time.Second
 )
 
 type Client struct {
 	apiKey     string
 	httpClient *http.Client
 	auditFn    AuditFunc
+	costLog    CostLogger
 }
 
 type AuditFunc func(ctx context.Context, entry AuditEntry) error
@@ -35,6 +37,8 @@ type AuditEntry struct {
 	TokensPrompt int
 	TokensOutput int
 	LatencyMs    int64
+	HTTPStatus   int
+	GenerationID string
 }
 
 type chatRequest struct {
@@ -71,6 +75,7 @@ type jsonSchemaDef struct {
 }
 
 type chatResponse struct {
+	ID      string `json:"id"`
 	Choices []struct {
 		Message struct {
 			Content string `json:"content"`
@@ -88,9 +93,13 @@ func NewClient(apiKey string, auditFn AuditFunc) *Client {
 	}
 	return &Client{
 		apiKey:     apiKey,
-		httpClient: &http.Client{Timeout: 120 * time.Second},
+		httpClient: &http.Client{Timeout: httpTimeout},
 		auditFn:    auditFn,
 	}
+}
+
+func (c *Client) SetCostLogger(fn CostLogger) {
+	c.costLog = fn
 }
 
 func (c *Client) CompleteJSON(ctx context.Context, userID *int64, operation, model, systemPrompt, userPrompt string, schema map[string]any) (string, error) {
@@ -147,12 +156,16 @@ func (c *Client) complete(ctx context.Context, userID *int64, operation, model, 
 	}
 
 	start := time.Now()
-	respBody, err := c.doRequest(ctx, body)
+	respBody, status, err := c.doRequest(ctx, body)
 	latency := time.Since(start).Milliseconds()
 
 	promptText := systemPrompt + "\n---\n" + userPrompt
 	if err != nil {
-		c.audit(ctx, userID, operation, model, promptText, err.Error(), 0, 0, latency)
+		c.audit(ctx, AuditEntry{
+			UserID: userID, Operation: operation, Model: model,
+			Prompt: promptText, RawResponse: err.Error(),
+			LatencyMs: latency, HTTPStatus: status,
+		})
 		return "", err
 	}
 
@@ -165,15 +178,31 @@ func (c *Client) complete(ctx context.Context, userID *int64, operation, model, 
 	}
 
 	contentStr := resp.Choices[0].Message.Content
-	c.audit(ctx, userID, operation, model, promptText, contentStr,
-		resp.Usage.PromptTokens, resp.Usage.CompletionTokens, latency)
+	c.audit(ctx, AuditEntry{
+		UserID: userID, Operation: operation, Model: model,
+		Prompt: promptText, RawResponse: contentStr,
+		TokensPrompt: resp.Usage.PromptTokens, TokensOutput: resp.Usage.CompletionTokens,
+		LatencyMs: latency, HTTPStatus: http.StatusOK, GenerationID: resp.ID,
+	})
+	c.scheduleCostFetch(ctx, resp.ID)
 	return contentStr, nil
 }
 
-func (c *Client) doRequest(ctx context.Context, body []byte) ([]byte, error) {
+func (c *Client) scheduleCostFetch(ctx context.Context, generationID string) {
+	if generationID == "" || c.costLog == nil {
+		return
+	}
+	go func() {
+		costCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), generationHTTPTimeout)
+		defer cancel()
+		c.FetchAndLogCost(costCtx, generationID)
+	}()
+}
+
+func (c *Client) doRequest(ctx context.Context, body []byte) ([]byte, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, openRouterURL, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+		return nil, 0, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
@@ -182,29 +211,28 @@ func (c *Client) doRequest(ctx context.Context, body []byte) ([]byte, error) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("http request: %w", err)
+		return nil, 0, fmt.Errorf("http request: %w", err)
 	}
 	defer closeHTTPBody(resp.Body)
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+		return nil, resp.StatusCode, fmt.Errorf("read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("openrouter status %d: %s", resp.StatusCode, string(respBody))
+		return nil, resp.StatusCode, &StatusError{
+			StatusCode: resp.StatusCode,
+			Body:       string(respBody),
+		}
 	}
-	return respBody, nil
+	return respBody, resp.StatusCode, nil
 }
 
-func (c *Client) audit(ctx context.Context, userID *int64, operation, model, prompt, rawResp string, tokIn, tokOut int, latency int64) {
+func (c *Client) audit(ctx context.Context, entry AuditEntry) {
 	if c.auditFn == nil {
 		return
 	}
-	_ = c.auditFn(ctx, AuditEntry{
-		UserID: userID, Operation: operation, Model: model,
-		Prompt: prompt, RawResponse: rawResp,
-		TokensPrompt: tokIn, TokensOutput: tokOut, LatencyMs: latency,
-	})
+	_ = c.auditFn(ctx, entry)
 }
 
 func detectMIME(path string) string {

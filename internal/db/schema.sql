@@ -139,3 +139,9 @@ CREATE TABLE IF NOT EXISTS daily_logs (
 
 CREATE INDEX IF NOT EXISTS idx_daily_logs_user_date
     ON daily_logs(user_id, log_date DESC);
+
+CREATE TABLE IF NOT EXISTS prompt_cache (
+    hash_key    TEXT PRIMARY KEY,
+    response    TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);

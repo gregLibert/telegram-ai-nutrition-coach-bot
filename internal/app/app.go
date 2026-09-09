@@ -97,12 +97,19 @@ func New(cfg Config) (*App, error) {
 		logger.LLMCall(ctx, map[string]any{
 			"operation": entry.Operation, "model": entry.Model,
 			"tokens_prompt": entry.TokensPrompt, "tokens_output": entry.TokensOutput,
-			"latency_ms": entry.LatencyMs,
+			"latency_ms": entry.LatencyMs, "http_status": entry.HTTPStatus,
+			"generation_id": entry.GenerationID,
 		})
 		return nil
 	}
 
 	llmClient := llm.NewClient(cfg.OpenRouterAPIKey, auditFn)
+	llmClient.SetCostLogger(func(ctx context.Context, generationID string, totalCost float64) {
+		logger.InfoContext(ctx, "llm_cost",
+			"generation_id", generationID,
+			"cost", totalCost,
+		)
+	})
 	coachSvc := coach.New(store, llmClient, logger)
 
 	oauthCfg := syncworker.OAuthConfig{
