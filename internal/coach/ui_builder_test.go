@@ -52,7 +52,7 @@ func TestBuildAnalysisMessage(t *testing.T) {
 				"🎯 Pour atteindre 100% ce soir",
 				"150g de skyr",
 			},
-			wantAbsent: []string{"Grocery hints", "Streak:", "Top aligned meals"},
+			wantAbsent: []string{"Grocery hints", "Streak:", "Top aligned meals", "Bilan Hebdomadaire"},
 		},
 		{
 			name: "english improvements no snack when over target",
@@ -85,27 +85,6 @@ func TestBuildAnalysisMessage(t *testing.T) {
 			},
 			wantAbsent: []string{"To hit 100% tonight", "Grocery"},
 		},
-		{
-			name: "weekly french title and no evening snack section",
-			view: AnalysisView{
-				Data: domain.NutritionAnalysis{
-					Congratulations:  "Belle semaine de logging.",
-					StreakMaintained: true,
-					EveningSnack:     "ignored on weekly",
-				},
-				Lang:        "fr",
-				Period:      analysisPeriodWeekly,
-				CurrentKcal: 1980,
-				TargetKcal:  2000,
-				Streak:      1,
-			},
-			wantContain: []string{
-				"📈 Analyse Hebdomadaire",
-				"🔥 Série : 1 jour",
-				"🟨",
-			},
-			wantAbsent: []string{"Pour atteindre 100%"},
-		},
 	}
 
 	for _, tt := range tests {
@@ -123,6 +102,56 @@ func TestBuildAnalysisMessage(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBuildWeeklyAnalysisMessage(t *testing.T) {
+	t.Parallel()
+
+	got := BuildWeeklyAnalysisMessage(WeeklyAnalysisView{
+		Data: domain.WeeklyAnalysis{
+			Overview:        "Déficit global respecté — bonne dynamique de perte de poids.",
+			MacroBottleneck: "Difficulté à atteindre les protéines le week-end",
+			MealTips: []domain.WeeklyMealTip{
+				{MealName: "Crêpes du dimanche", Tip: "Réduisez le nombre de crêpes et augmentez la dose de jambon"},
+				{MealName: "Purée du soir", Tip: "Optez pour du blanc de poulet en tranches fines"},
+			},
+			LegumeFocus: "Remplacez la purée de pommes de terre par des lentilles vertes ou une purée de pois cassés avec du fromage blanc",
+			GroceryList: []string{"Lentilles vertes", "Blanc de poulet en tranches fines", "Fromage blanc 0%"},
+		},
+		Lang:          "fr",
+		AvgKcal:       1900,
+		TargetKcal:    2100,
+		AvgProtein:    110,
+		TargetProtein: 140,
+		AvgCarbs:      180,
+		TargetCarbs:   220,
+		AvgFat:        60,
+		TargetFat:     70,
+	})
+
+	wantContain := []string{
+		"📋 Bilan Hebdomadaire",
+		"Déficit global respecté",
+		"📊 Moyenne sur 7 jours : 1900 / 2100 kcal",
+		"🥩 Protéines : 110 / 140 g",
+		"⚠️ Point d'attention : Difficulté à atteindre les protéines le week-end",
+		"💡 Astuces & Remplacements",
+		"Crêpes du dimanche",
+		"🍲 Focus Légumineuses",
+		"lentilles vertes",
+		"🛒 Idées Courses pour la semaine pro",
+		"Blanc de poulet en tranches fines",
+	}
+	for _, want := range wantContain {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in:\n%s", want, got)
+		}
+	}
+	for _, absent := range []string{"Série", "Pour atteindre 100%", "Streak"} {
+		if strings.Contains(got, absent) {
+			t.Fatalf("unexpected %q in:\n%s", absent, got)
+		}
 	}
 }
 

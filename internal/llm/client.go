@@ -363,3 +363,32 @@ var NutritionAnalysisSchema = map[string]any{
 	},
 	"additionalProperties": false,
 }
+
+var WeeklyAnalysisSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"overview":         map[string]any{"type": "string"},
+		"macro_bottleneck": map[string]any{"type": "string"},
+		"meal_tips": map[string]any{
+			"type": "array",
+			"items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"meal_name": map[string]any{"type": "string"},
+					"tip":       map[string]any{"type": "string"},
+				},
+				"required":             []string{"meal_name", "tip"},
+				"additionalProperties": false,
+			},
+		},
+		"legume_focus": map[string]any{"type": "string"},
+		"grocery_list": map[string]any{
+			"type":  "array",
+			"items": map[string]any{"type": "string"},
+		},
+	},
+	"required": []string{
+		"overview", "macro_bottleneck", "meal_tips", "legume_focus", "grocery_list",
+	},
+	"additionalProperties": false,
+}

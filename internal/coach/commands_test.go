@@ -54,6 +54,8 @@ func TestRouteNamedCommandRecognizesHelpAndUpdate(t *testing.T) {
 		{"/update_profile", cmdUpdateProfile},
 		{"/update_profil", cmdUpdateProfileFR},
 		{"/undo", cmdUndo},
+		{"/daily", cmdDaily},
+		{"/weekly", cmdWeekly},
 	}
 
 	for _, tt := range tests {

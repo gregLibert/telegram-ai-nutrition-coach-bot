@@ -29,6 +29,8 @@ const (
 	cmdRecipe        = "/recipe"
 	cmdSport         = "/sport"
 	cmdWhatIf        = "/whatif"
+	cmdDaily         = "/daily"
+	cmdWeekly        = "/weekly"
 	cmdHelp          = "/help"
 )
 
@@ -186,6 +188,12 @@ func (s *Service) routeMealCommands(ctx context.Context, user *db.User, cmd, arg
 		return resp, true, err
 	case cmdSport:
 		resp, err := s.handleSportPrompt(ctx, user)
+		return resp, true, err
+	case cmdDaily:
+		resp, err := s.handleDailyReport(ctx, user)
+		return resp, true, err
+	case cmdWeekly:
+		resp, err := s.handleWeeklyReport(ctx, user)
 		return resp, true, err
 	default:
 		return Response{}, false, nil
@@ -364,7 +372,9 @@ func (s *Service) handleHelp(_ context.Context, _ *db.User) (Response, error) {
 		"👨‍🍳 Coaching\n" +
 		"  /portion — Smart portion solver\n" +
 		"  /recipe — AI recipe generator (2-step)\n" +
-		"  /sport — Log manual activity calories\n\n" +
+		"  /sport — Log manual activity calories\n" +
+		"  /daily — Generate today's analysis now\n" +
+		"  /weekly — Generate this week's bilan now\n\n" +
 		"⌚ Integrations\n" +
 		"  /connect_polar — Link Polar for calorie sync\n\n" +
 		"  /help — Show this list"

@@ -14,7 +14,7 @@ const (
 	progressOverTargetRatio = 1.05
 )
 
-// AnalysisView carries rendered daily/weekly analysis inputs.
+// AnalysisView carries rendered daily analysis inputs.
 type AnalysisView struct {
 	Data           domain.NutritionAnalysis
 	Lang           string
@@ -28,6 +28,20 @@ type AnalysisView struct {
 	CurrentFat     float64
 	TargetFat      float64
 	Streak         int
+}
+
+// WeeklyAnalysisView carries rendered weekly bilan inputs.
+type WeeklyAnalysisView struct {
+	Data          domain.WeeklyAnalysis
+	Lang          string
+	AvgKcal       int
+	TargetKcal    int
+	AvgProtein    float64
+	TargetProtein float64
+	AvgCarbs      float64
+	TargetCarbs   float64
+	AvgFat        float64
+	TargetFat     float64
 }
 
 type analysisLabels struct {
@@ -45,13 +59,18 @@ type analysisLabels struct {
 	EveningSnack string
 	DaySingular  string
 	DayPlural    string
+	AvgOver7Days string
+	Attention    string
+	TipsSwaps    string
+	LegumeFocus  string
+	GroceryList  string
 }
 
 func analysisLabelsFor(lang string) analysisLabels {
 	if normalizeLanguage(lang) == "fr" {
 		return analysisLabels{
 			TitleDaily:   "📋 Analyse Quotidienne",
-			TitleWeekly:  "📈 Analyse Hebdomadaire",
+			TitleWeekly:  "📋 Bilan Hebdomadaire",
 			Streak:       "🔥 Série",
 			StatusOK:     "✅ Statut : maintenu",
 			StatusBad:    "⚠️ Statut : en danger / rompu",
@@ -64,11 +83,16 @@ func analysisLabelsFor(lang string) analysisLabels {
 			EveningSnack: "🎯 Pour atteindre 100% ce soir",
 			DaySingular:  "jour",
 			DayPlural:    "jours",
+			AvgOver7Days: "📊 Moyenne sur 7 jours",
+			Attention:    "⚠️ Point d'attention",
+			TipsSwaps:    "💡 Astuces & Remplacements",
+			LegumeFocus:  "🍲 Focus Légumineuses",
+			GroceryList:  "🛒 Idées Courses pour la semaine pro",
 		}
 	}
 	return analysisLabels{
 		TitleDaily:   "📋 Daily Analysis",
-		TitleWeekly:  "📈 Weekly Analysis",
+		TitleWeekly:  "📋 Weekly Review",
 		Streak:       "🔥 Streak",
 		StatusOK:     "✅ Status: maintained",
 		StatusBad:    "⚠️ Status: at risk / broken",
@@ -81,19 +105,20 @@ func analysisLabelsFor(lang string) analysisLabels {
 		EveningSnack: "🎯 To hit 100% tonight",
 		DaySingular:  "day",
 		DayPlural:    "days",
+		AvgOver7Days: "📊 7-day average",
+		Attention:    "⚠️ Watch-out",
+		TipsSwaps:    "💡 Tips & Swaps",
+		LegumeFocus:  "🍲 Legume Focus",
+		GroceryList:  "🛒 Grocery ideas for next week",
 	}
 }
 
-// BuildAnalysisMessage renders a Telegram-ready daily/weekly analysis message.
+// BuildAnalysisMessage renders a Telegram-ready daily analysis message.
 func BuildAnalysisMessage(v AnalysisView) string {
 	labels := analysisLabelsFor(v.Lang)
-	title := labels.TitleDaily
-	if v.Period == analysisPeriodWeekly {
-		title = labels.TitleWeekly
-	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s\n\n", title)
+	fmt.Fprintf(&sb, "%s\n\n", labels.TitleDaily)
 	fmt.Fprintf(&sb, "%s\n\n", v.Data.Congratulations)
 
 	dayUnit := labels.DayPlural
@@ -131,6 +156,46 @@ func BuildAnalysisMessage(v AnalysisView) string {
 
 	if shouldShowEveningSnack(v) {
 		fmt.Fprintf(&sb, "\n%s :\n%s\n", labels.EveningSnack, strings.TrimSpace(v.Data.EveningSnack))
+	}
+
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+// BuildWeeklyAnalysisMessage renders the weekly bilan layout.
+func BuildWeeklyAnalysisMessage(v WeeklyAnalysisView) string {
+	labels := analysisLabelsFor(v.Lang)
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%s\n\n", labels.TitleWeekly)
+	if overview := strings.TrimSpace(v.Data.Overview); overview != "" {
+		fmt.Fprintf(&sb, "%s\n\n", overview)
+	}
+
+	fmt.Fprintf(&sb, "%s : %d / %d kcal\n", labels.AvgOver7Days, v.AvgKcal, v.TargetKcal)
+	fmt.Fprintf(&sb, "%s : %.0f / %.0f g | %s : %.0f / %.0f g | %s : %.0f / %.0f g\n",
+		labels.Protein, v.AvgProtein, v.TargetProtein,
+		labels.Carbs, v.AvgCarbs, v.TargetCarbs,
+		labels.Fat, v.AvgFat, v.TargetFat,
+	)
+
+	if bottleneck := strings.TrimSpace(v.Data.MacroBottleneck); bottleneck != "" {
+		fmt.Fprintf(&sb, "\n%s : %s\n", labels.Attention, bottleneck)
+	}
+
+	if len(v.Data.MealTips) > 0 || strings.TrimSpace(v.Data.LegumeFocus) != "" {
+		fmt.Fprintf(&sb, "\n%s :\n", labels.TipsSwaps)
+		for _, tip := range v.Data.MealTips {
+			fmt.Fprintf(&sb, "  • %s : %s\n", tip.MealName, tip.Tip)
+		}
+		if legume := strings.TrimSpace(v.Data.LegumeFocus); legume != "" {
+			fmt.Fprintf(&sb, "  • %s : %s\n", labels.LegumeFocus, legume)
+		}
+	}
+
+	if len(v.Data.GroceryList) > 0 {
+		fmt.Fprintf(&sb, "\n%s :\n", labels.GroceryList)
+		for _, item := range v.Data.GroceryList {
+			fmt.Fprintf(&sb, "  • %s\n", item)
+		}
 	}
 
 	return strings.TrimRight(sb.String(), "\n")
