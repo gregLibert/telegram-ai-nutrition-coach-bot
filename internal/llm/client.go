@@ -193,15 +193,17 @@ func (c *Client) complete(ctx context.Context, userID *int64, operation, model, 
 	return contentStr, nil
 }
 
-func (c *Client) scheduleCostFetch(_ context.Context, generationID string) {
+func (c *Client) scheduleCostFetch(ctx context.Context, generationID string) {
 	if generationID == "" || c.costLog == nil {
 		return
 	}
-	// Detach from the caller context: Telegram/HTTP handlers cancel as soon as the
-	// reply is sent, which would abort OpenRouter's async generation-cost lookup.
+	// Detach cancellation from the caller: Telegram/HTTP handlers cancel as soon as
+	// the reply is sent, which would abort OpenRouter's async generation-cost lookup.
+	// WithoutCancel keeps request-scoped values while ignoring parent Done.
+	parent := context.WithoutCancel(ctx)
 	go func() {
 		costCtx, cancel := context.WithTimeout(
-			context.Background(),
+			parent,
 			generationCostSettleDelay+generationHTTPTimeout*time.Duration(generationCostMaxAttempts)+5*time.Second,
 		)
 		defer cancel()

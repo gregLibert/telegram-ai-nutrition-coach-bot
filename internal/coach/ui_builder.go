@@ -31,20 +31,20 @@ type AnalysisView struct {
 }
 
 type analysisLabels struct {
-	TitleDaily      string
-	TitleWeekly     string
-	Streak          string
-	StatusOK        string
-	StatusBad       string
-	Calories        string
-	Protein         string
-	Carbs           string
-	Fat             string
-	TopMeals        string
-	Improvements    string
-	EveningSnack    string
-	DaySingular     string
-	DayPlural       string
+	TitleDaily   string
+	TitleWeekly  string
+	Streak       string
+	StatusOK     string
+	StatusBad    string
+	Calories     string
+	Protein      string
+	Carbs        string
+	Fat          string
+	TopMeals     string
+	Improvements string
+	EveningSnack string
+	DaySingular  string
+	DayPlural    string
 }
 
 func analysisLabelsFor(lang string) analysisLabels {
