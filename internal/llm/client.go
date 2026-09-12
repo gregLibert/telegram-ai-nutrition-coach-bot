@@ -24,6 +24,7 @@ type Client struct {
 	httpClient *http.Client
 	auditFn    AuditFunc
 	costLog    CostLogger
+	costErrLog CostErrorLogger
 }
 
 type AuditFunc func(ctx context.Context, entry AuditEntry) error
@@ -100,6 +101,10 @@ func NewClient(apiKey string, auditFn AuditFunc) *Client {
 
 func (c *Client) SetCostLogger(fn CostLogger) {
 	c.costLog = fn
+}
+
+func (c *Client) SetCostErrorLogger(fn CostErrorLogger) {
+	c.costErrLog = fn
 }
 
 func (c *Client) CompleteJSON(ctx context.Context, userID *int64, operation, model, systemPrompt, userPrompt string, schema map[string]any) (string, error) {
@@ -188,13 +193,25 @@ func (c *Client) complete(ctx context.Context, userID *int64, operation, model, 
 	return contentStr, nil
 }
 
-func (c *Client) scheduleCostFetch(ctx context.Context, generationID string) {
+func (c *Client) scheduleCostFetch(_ context.Context, generationID string) {
 	if generationID == "" || c.costLog == nil {
 		return
 	}
+	// Detach from the caller context: Telegram/HTTP handlers cancel as soon as the
+	// reply is sent, which would abort OpenRouter's async generation-cost lookup.
 	go func() {
-		costCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), generationHTTPTimeout)
+		costCtx, cancel := context.WithTimeout(
+			context.Background(),
+			generationCostSettleDelay+generationHTTPTimeout*time.Duration(generationCostMaxAttempts)+5*time.Second,
+		)
 		defer cancel()
+		timer := time.NewTimer(generationCostSettleDelay)
+		defer timer.Stop()
+		select {
+		case <-costCtx.Done():
+			return
+		case <-timer.C:
+		}
 		c.FetchAndLogCost(costCtx, generationID)
 	}()
 }
@@ -337,13 +354,10 @@ var NutritionAnalysisSchema = map[string]any{
 				"additionalProperties": false,
 			},
 		},
-		"grocery_hints": map[string]any{
-			"type":  "array",
-			"items": map[string]any{"type": "string"},
-		},
+		"evening_snack": map[string]any{"type": "string"},
 	},
 	"required": []string{
-		"congratulations", "streak_maintained", "top_aligned_meals", "improvements", "grocery_hints",
+		"congratulations", "streak_maintained", "top_aligned_meals", "improvements", "evening_snack",
 	},
 	"additionalProperties": false,
 }

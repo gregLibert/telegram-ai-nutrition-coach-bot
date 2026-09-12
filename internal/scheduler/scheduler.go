@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/coach"
+	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/config"
 	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/db"
 	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/trace"
 )
@@ -18,16 +19,27 @@ type Scheduler struct {
 	logger   *trace.Logger
 	notify   Notifier
 	location *time.Location
+	schedule config.ReportSchedule
 }
 
 var errSkipReminder = errors.New("skip reminder: meal already logged")
 
-func New(store *db.Store, coachSvc *coach.Service, logger *trace.Logger, notify Notifier, tz string) *Scheduler {
+func New(store *db.Store, coachSvc *coach.Service, logger *trace.Logger, notify Notifier, tz string, schedule config.ReportSchedule) *Scheduler {
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
 		loc = time.UTC
 	}
-	return &Scheduler{store: store, coach: coachSvc, logger: logger, notify: notify, location: loc}
+	if schedule == (config.ReportSchedule{}) {
+		schedule = config.DefaultReportSchedule()
+	}
+	return &Scheduler{
+		store:    store,
+		coach:    coachSvc,
+		logger:   logger,
+		notify:   notify,
+		location: loc,
+		schedule: schedule,
+	}
 }
 
 func (sch *Scheduler) Run(ctx context.Context) {
@@ -52,11 +64,13 @@ func (sch *Scheduler) tick(ctx context.Context, now time.Time) {
 		sch.sendMealReminder(ctx, "lunch_reminder", "lunch", 11, 14, now)
 	case hour == 21 && minute == 0:
 		sch.sendMealReminder(ctx, "dinner_reminder", "dinner", 18, 21, now)
-	case hour == 21 && minute == 30:
+	case hour == sch.schedule.DailyHour && minute == sch.schedule.DailyMinute:
 		sch.sendJob(ctx, "daily_recap", func(uid int64) (string, error) {
 			return sch.coach.DailyRecap(ctx, uid)
 		})
-	case now.Weekday() == time.Sunday && hour == 20 && minute == 0:
+	case now.Weekday() == sch.schedule.WeeklyDay &&
+		hour == sch.schedule.WeeklyHour &&
+		minute == sch.schedule.WeeklyMinute:
 		sch.sendJob(ctx, "weekly_report", func(uid int64) (string, error) {
 			return sch.coach.WeeklyReport(ctx, uid)
 		})

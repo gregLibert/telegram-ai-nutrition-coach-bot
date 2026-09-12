@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/greg/telegram-ai-nutrition-coach-bot/internal/domain"
 )
@@ -22,10 +23,14 @@ const (
 	defaultServingGrams    = 100.0
 )
 
+// TraceFunc emits structured observability events for Open Food Facts calls.
+type TraceFunc func(ctx context.Context, event string, fields map[string]any)
+
 // Client queries Open Food Facts for packaged-food macros.
 type Client struct {
 	httpClient *http.Client
 	searchURL  string
+	trace      TraceFunc
 }
 
 func NewClient() *Client {
@@ -33,6 +38,14 @@ func NewClient() *Client {
 		httpClient: &http.Client{Timeout: httpTimeout},
 		searchURL:  openFoodFactsSearchURL,
 	}
+}
+
+// SetTracer registers structured logging for every Open Food Facts HTTP call.
+func (c *Client) SetTracer(fn TraceFunc) {
+	if c == nil {
+		return
+	}
+	c.trace = fn
 }
 
 // EstimateMeal looks up the query in Open Food Facts and maps per-100g nutrients
@@ -117,16 +130,21 @@ func (c *Client) search(ctx context.Context, query string) ([]offProduct, error)
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "application/json")
 
+	started := time.Now()
 	resp, err := c.httpClient.Do(req)
+	latencyMs := time.Since(started).Milliseconds()
 	if err != nil {
+		c.emitTrace(ctx, query, 0, latencyMs, err)
 		return nil, err
 	}
 	defer closeBody(resp.Body)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		c.emitTrace(ctx, query, resp.StatusCode, latencyMs, err)
 		return nil, err
 	}
+	c.emitTrace(ctx, query, resp.StatusCode, latencyMs, nil)
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("open food facts status %d: %s", resp.StatusCode, string(body))
 	}
@@ -136,6 +154,37 @@ func (c *Client) search(ctx context.Context, query string) ([]offProduct, error)
 		return nil, fmt.Errorf("decode open food facts: %w", err)
 	}
 	return parsed.Products, nil
+}
+
+func (c *Client) emitTrace(ctx context.Context, query string, status int, latencyMs int64, callErr error) {
+	if c == nil || c.trace == nil {
+		return
+	}
+	fields := map[string]any{
+		"query":       query,
+		"http_status": status,
+		"latency_ms":  latencyMs,
+	}
+	if barcode := lookLikeBarcode(query); barcode != "" {
+		fields["barcode"] = barcode
+	}
+	if callErr != nil {
+		fields["error"] = callErr.Error()
+	}
+	c.trace(ctx, "open_food_facts_call", fields)
+}
+
+func lookLikeBarcode(query string) string {
+	trimmed := strings.TrimSpace(query)
+	if len(trimmed) < 8 || len(trimmed) > 14 {
+		return ""
+	}
+	for _, r := range trimmed {
+		if !unicode.IsDigit(r) {
+			return ""
+		}
+	}
+	return trimmed
 }
 
 func firstPositive(values ...float64) float64 {

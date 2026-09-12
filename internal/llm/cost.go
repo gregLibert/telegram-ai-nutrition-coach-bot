@@ -11,23 +11,46 @@ import (
 )
 
 const (
-	openRouterGenerationURL = "https://openrouter.ai/api/v1/generation"
-	generationHTTPTimeout   = 15 * time.Second
+	openRouterGenerationURL   = "https://openrouter.ai/api/v1/generation"
+	generationHTTPTimeout     = 15 * time.Second
+	generationCostSettleDelay = 2 * time.Second
+	generationCostMaxAttempts = 3
 )
 
 // CostLogger logs structured LLM cost events.
 type CostLogger func(ctx context.Context, generationID string, totalCost float64)
+
+// CostErrorLogger logs failures while fetching generation cost.
+type CostErrorLogger func(ctx context.Context, generationID string, err error)
 
 // FetchAndLogCost retrieves total_cost for a generation and logs it asynchronously-safe.
 func (c *Client) FetchAndLogCost(ctx context.Context, generationID string) {
 	if c == nil || generationID == "" || c.costLog == nil {
 		return
 	}
-	cost, err := c.fetchGenerationCost(ctx, generationID)
-	if err != nil {
-		return
+	var lastErr error
+	for attempt := 1; attempt <= generationCostMaxAttempts; attempt++ {
+		cost, err := c.fetchGenerationCost(ctx, generationID)
+		if err == nil {
+			c.costLog(ctx, generationID, cost)
+			return
+		}
+		lastErr = err
+		if attempt == generationCostMaxAttempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			if c.costErrLog != nil {
+				c.costErrLog(ctx, generationID, ctx.Err())
+			}
+			return
+		case <-time.After(time.Duration(attempt) * time.Second):
+		}
 	}
-	c.costLog(ctx, generationID, cost)
+	if c.costErrLog != nil && lastErr != nil {
+		c.costErrLog(ctx, generationID, lastErr)
+	}
 }
 
 func (c *Client) fetchGenerationCost(ctx context.Context, generationID string) (float64, error) {
@@ -45,10 +68,7 @@ func (c *Client) fetchGenerationCost(ctx context.Context, generationID string) (
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 
-	client := c.httpClient
-	if client == nil {
-		client = &http.Client{Timeout: generationHTTPTimeout}
-	}
+	client := &http.Client{Timeout: generationHTTPTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err

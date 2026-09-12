@@ -12,105 +12,106 @@ func TestBuildAnalysisMessage(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		data        domain.NutritionAnalysis
-		currentKcal int
-		targetKcal  int
-		streak      int
-		title       string
+		view        AnalysisView
 		wantContain []string
 		wantAbsent  []string
 	}{
 		{
-			name: "perfect streak under target",
-			data: domain.NutritionAnalysis{
-				Congratulations:  "Great job logging every meal!",
-				StreakMaintained: true,
-				TopAlignedMeals:  []string{"Chicken bowl", "Greek yogurt"},
-				Improvements:     nil,
-				GroceryHints:     []string{"Keep skyr stocked"},
+			name: "french daily under target with snack",
+			view: AnalysisView{
+				Data: domain.NutritionAnalysis{
+					Congratulations:  "Bravo pour le suivi aujourd'hui !",
+					StreakMaintained: true,
+					TopAlignedMeals:  []string{"Bowl poulet", "Skyr"},
+					EveningSnack:     "150g de skyr et 15g d'amandes — apporte les 25g de protéines manquantes sans exploser les glucides.",
+				},
+				Lang:           "fr",
+				Period:         analysisPeriodDaily,
+				CurrentKcal:    1130,
+				TargetKcal:     2336,
+				CurrentProtein: 80,
+				TargetProtein:  140,
+				CurrentCarbs:   100,
+				TargetCarbs:    220,
+				CurrentFat:     40,
+				TargetFat:      70,
+				Streak:         5,
 			},
-			currentKcal: 1800,
-			targetKcal:  2000,
-			streak:      5,
-			title:       "📋 Daily Analysis",
+			wantContain: []string{
+				"📋 Analyse Quotidienne",
+				"Bravo pour le suivi aujourd'hui !",
+				"🔥 Série : 5 jours",
+				"✅ Statut : maintenu",
+				"📊 Calories : 1130 / 2336 kcal",
+				"🟩",
+				"🥩 Protéines : 80 / 140 g",
+				"🍚 Glucides : 100 / 220 g",
+				"🥑 Lipides : 40 / 70 g",
+				"✅ Meilleurs repas",
+				"Bowl poulet",
+				"🎯 Pour atteindre 100% ce soir",
+				"150g de skyr",
+			},
+			wantAbsent: []string{"Grocery hints", "Streak:", "Top aligned meals"},
+		},
+		{
+			name: "english improvements no snack when over target",
+			view: AnalysisView{
+				Data: domain.NutritionAnalysis{
+					Congratulations:  "Calories ran high — trim evening snacks.",
+					StreakMaintained: false,
+					Improvements: []domain.MealImprovement{
+						{
+							MealName:    "Dinner pizza",
+							Issue:       "Too high in fat/calories",
+							Alternative: "Thin-crust + side salad, add whey shake",
+						},
+					},
+					EveningSnack: "should not appear",
+				},
+				Lang:        "en",
+				Period:      analysisPeriodDaily,
+				CurrentKcal: 2600,
+				TargetKcal:  2000,
+				Streak:      0,
+			},
 			wantContain: []string{
 				"📋 Daily Analysis",
-				"Great job logging every meal!",
-				"🔥 Streak: 5 days",
-				"✅ Streak status: maintained",
-				"Calories: 1800 / 2000 kcal",
-				"🟩",
-				"✅ Top aligned meals:",
-				"Chicken bowl",
-				"🛒 Grocery hints:",
-				"Keep skyr stocked",
-			},
-			wantAbsent: []string{"🔧 Improvements:"},
-		},
-		{
-			name: "missing meals broken streak",
-			data: domain.NutritionAnalysis{
-				Congratulations:  "You missed lunch — restart strong tomorrow.",
-				StreakMaintained: false,
-				TopAlignedMeals:  nil,
-				Improvements: []domain.MealImprovement{
-					{
-						MealName:    "Dinner pizza",
-						Issue:       "Too high in fat/calories",
-						Alternative: "Thin-crust + side salad, add whey shake",
-					},
-				},
-				GroceryHints: []string{"Buy whey and legumes"},
-			},
-			currentKcal: 900,
-			targetKcal:  2000,
-			streak:      0,
-			title:       "📋 Daily Analysis",
-			wantContain: []string{
-				"You missed lunch — restart strong tomorrow.",
-				"🔥 Streak: 0 days",
-				"⚠️ Streak status: at risk / broken",
-				"🔧 Improvements:",
+				"🔥 Streak : 0 days",
+				"⚠️ Status: at risk / broken",
+				"🔧 Improvement ideas",
 				"Dinner pizza",
-				"Thin-crust + side salad",
-				"Buy whey and legumes",
-			},
-		},
-		{
-			name: "exceeding calorie target uses red bar",
-			data: domain.NutritionAnalysis{
-				Congratulations:  "Calories ran high — trim evening snacks.",
-				StreakMaintained: true,
-			},
-			currentKcal: 2600,
-			targetKcal:  2000,
-			streak:      1,
-			title:       "📈 Weekly Analysis",
-			wantContain: []string{
-				"📈 Weekly Analysis",
-				"🔥 Streak: 1 day",
-				"Calories: 2600 / 2000 kcal",
 				"🟥",
-				"130%",
 			},
+			wantAbsent: []string{"To hit 100% tonight", "Grocery"},
 		},
 		{
-			name: "near target uses yellow bar",
-			data: domain.NutritionAnalysis{
-				Congratulations:  "Almost perfect day.",
-				StreakMaintained: true,
+			name: "weekly french title and no evening snack section",
+			view: AnalysisView{
+				Data: domain.NutritionAnalysis{
+					Congratulations:  "Belle semaine de logging.",
+					StreakMaintained: true,
+					EveningSnack:     "ignored on weekly",
+				},
+				Lang:        "fr",
+				Period:      analysisPeriodWeekly,
+				CurrentKcal: 1980,
+				TargetKcal:  2000,
+				Streak:      1,
 			},
-			currentKcal: 1980,
-			targetKcal:  2000,
-			streak:      3,
-			wantContain: []string{"🟨", "99%"},
+			wantContain: []string{
+				"📈 Analyse Hebdomadaire",
+				"🔥 Série : 1 jour",
+				"🟨",
+			},
+			wantAbsent: []string{"Pour atteindre 100%"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := BuildAnalysisMessage(tt.data, tt.currentKcal, tt.targetKcal, tt.streak, tt.title)
+			got := BuildAnalysisMessage(tt.view)
 			for _, want := range tt.wantContain {
 				if !strings.Contains(got, want) {
 					t.Fatalf("missing %q in:\n%s", want, got)

@@ -59,11 +59,17 @@ type Response struct {
 }
 
 func New(store *db.Store, llmClient *llm.Client, logger *trace.Logger) *Service {
+	off := nutrition.NewClient()
+	if logger != nil {
+		off.SetTracer(func(ctx context.Context, event string, fields map[string]any) {
+			logger.DomainEvent(ctx, event, fields)
+		})
+	}
 	return &Service{
 		store:     store,
 		llm:       llmClient,
 		logger:    logger,
-		nutrition: nutrition.NewClient(),
+		nutrition: off,
 	}
 }
 

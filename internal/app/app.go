@@ -32,6 +32,7 @@ type Config struct {
 	PolarSecret      string
 	PolarRedirectURI string
 	AllowedUsers     config.AllowList
+	ReportSchedule   config.ReportSchedule
 }
 
 func DefaultConfig() Config {
@@ -39,6 +40,15 @@ func DefaultConfig() Config {
 	if err != nil {
 		slog.Error("invalid ALLOWED_USERS; denying all Telegram users", "error", err)
 		allowed = config.AllowList{}
+	}
+	schedule, err := config.ParseReportSchedule(
+		os.Getenv("DAILY_REPORT_TIME"),
+		os.Getenv("WEEKLY_REPORT_DAY"),
+		os.Getenv("WEEKLY_REPORT_TIME"),
+	)
+	if err != nil {
+		slog.Error("invalid report schedule; using defaults", "error", err)
+		schedule = config.DefaultReportSchedule()
 	}
 	return Config{
 		DBPath:           envOr("DB_PATH", "data/coach.db"),
@@ -51,6 +61,7 @@ func DefaultConfig() Config {
 		PolarSecret:      os.Getenv("POLAR_CLIENT_SECRET"),
 		PolarRedirectURI: os.Getenv("POLAR_REDIRECT_URI"),
 		AllowedUsers:     allowed,
+		ReportSchedule:   schedule,
 	}
 }
 
@@ -110,6 +121,12 @@ func New(cfg Config) (*App, error) {
 			"cost", totalCost,
 		)
 	})
+	llmClient.SetCostErrorLogger(func(ctx context.Context, generationID string, err error) {
+		logger.WarnContext(ctx, "llm_cost_fetch_error",
+			"generation_id", generationID,
+			"error", err.Error(),
+		)
+	})
 	coachSvc := coach.New(store, llmClient, logger)
 
 	oauthCfg := syncworker.OAuthConfig{
@@ -146,7 +163,7 @@ func (a *App) RunBot(ctx context.Context) error {
 		RedirectURI:  a.config.PolarRedirectURI,
 	}
 	worker := syncworker.New(a.store, a.logger, oauthCfg, a.config.Timezone)
-	sch := scheduler.New(a.store, a.coach, a.logger, bot.SendTo, a.config.Timezone)
+	sch := scheduler.New(a.store, a.coach, a.logger, bot.SendTo, a.config.Timezone, a.config.ReportSchedule)
 
 	go sch.Run(ctx)
 	go worker.Run(ctx)

@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -74,10 +75,33 @@ func (b *Bot) pollUpdates(ctx context.Context) error {
 }
 
 func (b *Bot) logPollError(ctx context.Context, err error) {
-	if b.logger == nil {
+	if b.logger == nil || err == nil {
+		return
+	}
+	msg := err.Error()
+	if isTransientTelegramGatewayError(msg) {
+		b.logger.DebugContext(ctx, "telegram poll transient error",
+			"error", msg,
+		)
 		return
 	}
 	b.logger.WarnContext(ctx, "telegram poll error",
-		"error", err.Error(),
+		"error", msg,
 	)
+}
+
+func isTransientTelegramGatewayError(msg string) bool {
+	lower := strings.ToLower(msg)
+	switch {
+	case strings.Contains(lower, "502"):
+		return true
+	case strings.Contains(lower, "504"):
+		return true
+	case strings.Contains(lower, "bad gateway"):
+		return true
+	case strings.Contains(lower, "gateway timeout"):
+		return true
+	default:
+		return false
+	}
 }

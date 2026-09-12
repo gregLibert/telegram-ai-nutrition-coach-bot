@@ -13,5 +13,5 @@ type NutritionAnalysis struct {
 	StreakMaintained bool              `json:"streak_maintained"`
 	TopAlignedMeals  []string          `json:"top_aligned_meals"`
 	Improvements     []MealImprovement `json:"improvements"`
-	GroceryHints     []string          `json:"grocery_hints"`
+	EveningSnack     string            `json:"evening_snack"`
 }

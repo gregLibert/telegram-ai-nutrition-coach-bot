@@ -14,46 +14,141 @@ const (
 	progressOverTargetRatio = 1.05
 )
 
+// AnalysisView carries rendered daily/weekly analysis inputs.
+type AnalysisView struct {
+	Data           domain.NutritionAnalysis
+	Lang           string
+	Period         analysisPeriod
+	CurrentKcal    int
+	TargetKcal     int
+	CurrentProtein float64
+	TargetProtein  float64
+	CurrentCarbs   float64
+	TargetCarbs    float64
+	CurrentFat     float64
+	TargetFat      float64
+	Streak         int
+}
+
+type analysisLabels struct {
+	TitleDaily      string
+	TitleWeekly     string
+	Streak          string
+	StatusOK        string
+	StatusBad       string
+	Calories        string
+	Protein         string
+	Carbs           string
+	Fat             string
+	TopMeals        string
+	Improvements    string
+	EveningSnack    string
+	DaySingular     string
+	DayPlural       string
+}
+
+func analysisLabelsFor(lang string) analysisLabels {
+	if normalizeLanguage(lang) == "fr" {
+		return analysisLabels{
+			TitleDaily:   "📋 Analyse Quotidienne",
+			TitleWeekly:  "📈 Analyse Hebdomadaire",
+			Streak:       "🔥 Série",
+			StatusOK:     "✅ Statut : maintenu",
+			StatusBad:    "⚠️ Statut : en danger / rompu",
+			Calories:     "📊 Calories",
+			Protein:      "🥩 Protéines",
+			Carbs:        "🍚 Glucides",
+			Fat:          "🥑 Lipides",
+			TopMeals:     "✅ Meilleurs repas",
+			Improvements: "🔧 Pistes d'amélioration",
+			EveningSnack: "🎯 Pour atteindre 100% ce soir",
+			DaySingular:  "jour",
+			DayPlural:    "jours",
+		}
+	}
+	return analysisLabels{
+		TitleDaily:   "📋 Daily Analysis",
+		TitleWeekly:  "📈 Weekly Analysis",
+		Streak:       "🔥 Streak",
+		StatusOK:     "✅ Status: maintained",
+		StatusBad:    "⚠️ Status: at risk / broken",
+		Calories:     "📊 Calories",
+		Protein:      "🥩 Protein",
+		Carbs:        "🍚 Carbs",
+		Fat:          "🥑 Fat",
+		TopMeals:     "✅ Top aligned meals",
+		Improvements: "🔧 Improvement ideas",
+		EveningSnack: "🎯 To hit 100% tonight",
+		DaySingular:  "day",
+		DayPlural:    "days",
+	}
+}
+
 // BuildAnalysisMessage renders a Telegram-ready daily/weekly analysis message.
-func BuildAnalysisMessage(data domain.NutritionAnalysis, currentKcal, targetKcal, streak int, title string) string {
+func BuildAnalysisMessage(v AnalysisView) string {
+	labels := analysisLabelsFor(v.Lang)
+	title := labels.TitleDaily
+	if v.Period == analysisPeriodWeekly {
+		title = labels.TitleWeekly
+	}
+
 	var sb strings.Builder
-	if title == "" {
-		title = "📋 Nutrition Analysis"
-	}
 	fmt.Fprintf(&sb, "%s\n\n", title)
-	fmt.Fprintf(&sb, "%s\n\n", data.Congratulations)
-	fmt.Fprintf(&sb, "🔥 Streak: %d day%s\n", streak, pluralSuffix(streak))
-	if data.StreakMaintained {
-		sb.WriteString("✅ Streak status: maintained\n")
+	fmt.Fprintf(&sb, "%s\n\n", v.Data.Congratulations)
+
+	dayUnit := labels.DayPlural
+	if v.Streak == 1 {
+		dayUnit = labels.DaySingular
+	}
+	fmt.Fprintf(&sb, "%s : %d %s\n", labels.Streak, v.Streak, dayUnit)
+	if v.Data.StreakMaintained {
+		sb.WriteString(labels.StatusOK + "\n")
 	} else {
-		sb.WriteString("⚠️ Streak status: at risk / broken\n")
+		sb.WriteString(labels.StatusBad + "\n")
 	}
 
-	fmt.Fprintf(&sb, "\nCalories: %d / %d kcal\n", currentKcal, targetKcal)
-	fmt.Fprintf(&sb, "%s\n", BuildCalorieProgressBar(currentKcal, targetKcal))
+	fmt.Fprintf(&sb, "\n%s : %d / %d kcal\n", labels.Calories, v.CurrentKcal, v.TargetKcal)
+	fmt.Fprintf(&sb, "%s\n", BuildCalorieProgressBar(v.CurrentKcal, v.TargetKcal))
+	fmt.Fprintf(&sb, "%s : %.0f / %.0f g | %s : %.0f / %.0f g | %s : %.0f / %.0f g\n",
+		labels.Protein, v.CurrentProtein, v.TargetProtein,
+		labels.Carbs, v.CurrentCarbs, v.TargetCarbs,
+		labels.Fat, v.CurrentFat, v.TargetFat,
+	)
 
-	if len(data.TopAlignedMeals) > 0 {
-		sb.WriteString("\n✅ Top aligned meals:\n")
-		for _, meal := range data.TopAlignedMeals {
+	if len(v.Data.TopAlignedMeals) > 0 {
+		fmt.Fprintf(&sb, "\n%s :\n", labels.TopMeals)
+		for _, meal := range v.Data.TopAlignedMeals {
 			fmt.Fprintf(&sb, "  • %s\n", meal)
 		}
 	}
 
-	if len(data.Improvements) > 0 {
-		sb.WriteString("\n🔧 Improvements:\n")
-		for _, item := range data.Improvements {
+	if len(v.Data.Improvements) > 0 {
+		fmt.Fprintf(&sb, "\n%s :\n", labels.Improvements)
+		for _, item := range v.Data.Improvements {
 			fmt.Fprintf(&sb, "  • %s — %s\n    → %s\n", item.MealName, item.Issue, item.Alternative)
 		}
 	}
 
-	if len(data.GroceryHints) > 0 {
-		sb.WriteString("\n🛒 Grocery hints:\n")
-		for _, hint := range data.GroceryHints {
-			fmt.Fprintf(&sb, "  • %s\n", hint)
-		}
+	if shouldShowEveningSnack(v) {
+		fmt.Fprintf(&sb, "\n%s :\n%s\n", labels.EveningSnack, strings.TrimSpace(v.Data.EveningSnack))
 	}
 
 	return strings.TrimRight(sb.String(), "\n")
+}
+
+func shouldShowEveningSnack(v AnalysisView) bool {
+	if v.Period != analysisPeriodDaily {
+		return false
+	}
+	snack := strings.TrimSpace(v.Data.EveningSnack)
+	if snack == "" {
+		return false
+	}
+	underCalories := v.TargetKcal > 0 && v.CurrentKcal < v.TargetKcal
+	underProtein := v.TargetProtein > 0 && v.CurrentProtein < v.TargetProtein
+	underCarbs := v.TargetCarbs > 0 && v.CurrentCarbs < v.TargetCarbs
+	underFat := v.TargetFat > 0 && v.CurrentFat < v.TargetFat
+	return underCalories || underProtein || underCarbs || underFat
 }
 
 // BuildCalorieProgressBar returns a Unicode bar comparing current vs target kcal.
@@ -94,11 +189,4 @@ func progressFillEmoji(ratio float64) string {
 	default:
 		return "🟩"
 	}
-}
-
-func pluralSuffix(n int) string {
-	if n == 1 {
-		return ""
-	}
-	return "s"
 }

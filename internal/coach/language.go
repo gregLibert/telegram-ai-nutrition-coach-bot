@@ -12,7 +12,7 @@ func normalizeLanguage(lang string) string {
 func languageInstruction(lang string) string {
 	switch normalizeLanguage(lang) {
 	case "fr":
-		return "Respond entirely in French."
+		return "Respond entirely in French. Every user-facing string must be French — never mix in English headers or labels."
 	default:
 		return "Respond entirely in English."
 	}

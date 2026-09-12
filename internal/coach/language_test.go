@@ -22,7 +22,8 @@ func TestNormalizeLanguage(t *testing.T) {
 func TestWithLanguage(t *testing.T) {
 	t.Parallel()
 	got := withLanguage("Base prompt.", "fr")
-	if got != "Base prompt.\nRespond entirely in French." {
+	wantFR := "Base prompt.\nRespond entirely in French. Every user-facing string must be French — never mix in English headers or labels."
+	if got != wantFR {
 		t.Fatalf("unexpected: %q", got)
 	}
 	got = withLanguage("Base prompt.", "en")

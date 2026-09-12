@@ -45,17 +45,17 @@ func (s *Service) runNutritionAnalysis(ctx context.Context, userID int64, period
 	var (
 		start, end time.Time
 		progress   domain.DailyProgress
-		title      string
 		barCurrent int
 		barTarget  int
+		macroScale float64
 	)
 	switch period {
 	case analysisPeriodWeekly:
 		start, end = domain.WeekBounds(loc, localNow)
-		title = "📈 Weekly Analysis"
+		macroScale = 7
 	default:
 		start, end = domain.DayBounds(loc, localNow)
-		title = "📋 Daily Analysis"
+		macroScale = 1
 	}
 
 	meals, err := s.store.ListMealsBetween(ctx, userID, start, end)
@@ -70,23 +70,37 @@ func (s *Service) runNutritionAnalysis(ctx context.Context, userID int64, period
 
 	switch period {
 	case analysisPeriodWeekly:
-		// Progress bar uses average daily calories vs daily target.
-		const weekDays = 7
-		barCurrent = int(progress.Calories / weekDays)
+		barCurrent = int(progress.Calories / macroScale)
 		barTarget = int(targets.TargetCalories)
 	default:
 		barCurrent = int(progress.Calories)
 		barTarget = int(targets.TargetCalories)
 	}
 
+	view := AnalysisView{
+		Lang:           user.Language,
+		Period:         period,
+		CurrentKcal:    barCurrent,
+		TargetKcal:     barTarget,
+		CurrentProtein: progress.ProteinG / macroScale,
+		TargetProtein:  targets.TargetProteinG,
+		CurrentCarbs:   progress.CarbsG / macroScale,
+		TargetCarbs:    targets.TargetCarbsG,
+		CurrentFat:     progress.FatG / macroScale,
+		TargetFat:      targets.TargetFatG,
+		Streak:         streak,
+	}
+
 	analysis, err := s.requestNutritionAnalysis(ctx, userID, user.Language, period, targets, progress, meals, streak)
 	if err != nil {
-		return BuildAnalysisMessage(domain.NutritionAnalysis{
-			Congratulations:  fallbackCongrats(period),
+		view.Data = domain.NutritionAnalysis{
+			Congratulations:  fallbackCongrats(period, user.Language),
 			StreakMaintained: streak > 0,
-		}, barCurrent, barTarget, streak, title), nil
+		}
+		return BuildAnalysisMessage(view), nil
 	}
-	return BuildAnalysisMessage(analysis, barCurrent, barTarget, streak, title), nil
+	view.Data = analysis
+	return BuildAnalysisMessage(view), nil
 }
 
 func sumMealProgress(meals []db.MealRow) domain.DailyProgress {
@@ -100,13 +114,17 @@ func sumMealProgress(meals []db.MealRow) domain.DailyProgress {
 	return p
 }
 
-func fallbackCongrats(period analysisPeriod) string {
-	switch period {
-	case analysisPeriodWeekly:
-		return "Weekly summary unavailable from AI. Keep logging meals to unlock coaching insights."
-	default:
-		return "Keep logging — detailed AI analysis was unavailable this time."
+func fallbackCongrats(period analysisPeriod, lang string) string {
+	if normalizeLanguage(lang) == "fr" {
+		if period == analysisPeriodWeekly {
+			return "Résumé hebdomadaire indisponible côté IA. Continue à logger pour débloquer le coaching."
+		}
+		return "Continue à logger — l'analyse IA détaillée était indisponible cette fois."
 	}
+	if period == analysisPeriodWeekly {
+		return "Weekly summary unavailable from AI. Keep logging meals to unlock coaching insights."
+	}
+	return "Keep logging — detailed AI analysis was unavailable this time."
 }
 
 func (s *Service) requestNutritionAnalysis(
@@ -138,15 +156,34 @@ func nutritionAnalysisSystemPrompt(period analysisPeriod) string {
 	if period == analysisPeriodWeekly {
 		scope = "this week's meals"
 	}
+	eveningRules := ""
+	if period == analysisPeriodDaily {
+		eveningRules = `
+- evening_snack: REQUIRED when the user is below calorie and/or macro targets. Propose ONE realistic late-night snack ("collation de fin de journée") to reach ~100% of targets.
+  Constraint 1: NO cooking — only ready-to-eat items (whey, petits suisses, skyr, nuts, fresh fruit, canned tuna, yogurt, etc.).
+  Constraint 2: Standard human portions (e.g. "150g de skyr et 15g d'amandes"), never unrealistic amounts like 500g of one item.
+  Constraint 3: Briefly explain how the snack fills the specific missing macros (e.g. remaining protein without exploding carbs).
+  If the user is already at or above all targets, set evening_snack to an empty string.`
+	} else {
+		eveningRules = `
+- evening_snack: always set to an empty string for weekly reports.`
+	}
+
 	return fmt.Sprintf(`You are an expert nutrition coach. Analyze %s against the user's macro targets.
 Return ONLY JSON matching the required schema. Do not write free-form user text outside the JSON fields.
+
+STRICT LOCALIZATION (critical):
+- Write EVERY string field in the exact same language as the user's meal descriptions / preferred language.
+- Never mix languages. Do not leave English headers, category names, or filler words inside the JSON string values.
+- The client UI already localizes section titles; focus on natural localized content in congratulations, meal names commentary, issues, alternatives, and evening_snack.
+
 Rules:
-- congratulations: encouraging if logging is complete and macros are on track; motivating if meals were missed or macros drifted.
+- congratulations: personalized encouragement; motivating if meals were missed or macros drifted.
 - streak_maintained: true when the user kept consecutive logging days; false if the streak is broken or at risk.
-- top_aligned_meals: meals that fit the plan well (protein-forward, balanced calories).
-- improvements: concrete meal-level issues with actionable alternatives that reduce bad macros and add missing ones.
-- grocery_hints: practical shopping tips (e.g. skyr, whey, legumes) when protein or fiber is lacking.
-Keep strings concise and actionable.`, scope)
+- top_aligned_meals: short descriptions of meals that fit the plan well.
+- improvements: concrete meal-level issues with actionable alternatives (no grocery shopping list).
+- Do NOT generate grocery hints or shopping lists.%s
+Keep strings concise and actionable.`, scope, eveningRules)
 }
 
 func buildNutritionAnalysisUserPrompt(
@@ -179,6 +216,14 @@ func buildNutritionAnalysisUserPrompt(
 		fmt.Fprintf(&sb,
 			"Consumed (today): %.0f kcal | P %.0f g | F %.0f g | C %.0f g\n",
 			progress.Calories, progress.ProteinG, progress.FatG, progress.CarbsG,
+		)
+		remainingKcal := targets.TargetCalories - progress.Calories
+		remainingP := targets.TargetProteinG - progress.ProteinG
+		remainingF := targets.TargetFatG - progress.FatG
+		remainingC := targets.TargetCarbsG - progress.CarbsG
+		fmt.Fprintf(&sb,
+			"Remaining to 100%%: %.0f kcal | P %.0f g | F %.0f g | C %.0f g\n",
+			remainingKcal, remainingP, remainingF, remainingC,
 		)
 	}
 	sb.WriteString("Meals:\n")
